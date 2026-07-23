@@ -54,3 +54,8 @@ body {
     opacity: 0;
   } 
 }
+
+.letter {
+  display: inline-block;
+  font-size: inherit;
+}

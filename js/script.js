@@ -1,4 +1,48 @@
 const btn = document.getElementById('btn');
+const textElement = document.getElementById('text');
+const textContent = textElement.textContent;
+const letters = textContent.split('');
+
+textElement.textContent = '';
+
+letters.forEach(char => {
+  const span = document.createElement('span');
+  span.className = 'letter';
+  span.textContent = char === ' ' ? '\u00A0' : char;
+  textElement.appendChild(span);
+});
+
+function jumpLetter(letterElement) {
+  const GRAVITY = 1500;
+  const JUMP_FORCE = -600;
+
+  let vy = JUMP_FORCE;
+  let y = 0;
+  let lastTime = null;
+
+  function animate(timestamp) {
+    if (lastTime === null) lastTime = timestamp;
+    const dt = (timestamp - lastTime) / 1000;
+    lastTime = timestamp;
+
+    vy += GRAVITY * dt;
+    y += vy * dt;
+
+    letterElement.style.transform = `translateY(${y}px)`;
+
+    if (y < 0) {
+      requestAnimationFrame(animate);
+    } else {
+      letterElement.style.transform = 'translateY(0)';
+    }
+  }
+
+  requestAnimationFrame(animate);
+}
+
+const letterSpans = document.querySelectorAll('.letter');
+
+let isDancing = false;
 
 function createRipple(event) {
   const button = event.currentTarget;
