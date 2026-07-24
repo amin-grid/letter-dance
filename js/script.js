@@ -21,8 +21,12 @@ function jumpLetter(letterElement) {
   let lastTime = null;
 
   function animate(timestamp) {
-    if (lastTime === null) lastTime = timestamp;
-    const dt = (timestamp - lastTime) / 1000;
+    if (lastTime === null) {
+      lastTime = timestamp;
+      requestAnimationFrame(animate);
+      return;
+    }
+    let dt = (timestamp - lastTime) / 1000;
     lastTime = timestamp;
 
     vy += GRAVITY * dt;
@@ -44,6 +48,32 @@ const letterSpans = document.querySelectorAll('.letter');
 
 let isDancing = false;
 
+function startDance() {
+  if (isDancing) return;
+  isDancing = true;
+
+  btn.disabled = true;
+  btn.style.opacity = '0.6';
+  btn.style.cursor = 'not-allowed';
+
+  letterSpans.forEach((letter, index) => {
+    const delay = index * 150;
+    setTimeout(() => {
+      jumpLetter(letter);
+    }, delay);
+  });
+
+  const totalDuration = letterSpans.length * 150 + 1000;
+  setTimeout(() => {
+    isDancing = false;
+    btn.disabled = false;
+    btn.style.opacity = '1';
+    btn.style.cursor = 'pointer';
+  }, totalDuration);
+}
+
+btn.addEventListener('click', startDance);
+
 function createRipple(event) {
   const button = event.currentTarget;
   const rect = button.getBoundingClientRect();
@@ -56,7 +86,7 @@ function createRipple(event) {
   ripple.style.left = `${x - size / 2}px`;
   ripple.style.top = `${y - size / 2}px`;
   button.appendChild(ripple);
-  ripple.addEventListener('animationed', () => {
+  ripple.addEventListener('animationend', () => {
     ripple.remove();
   });
 }
