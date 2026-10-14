@@ -58,10 +58,11 @@ body {
   font-weight: 600;
   line-height: 1.2;
   text-align: center;
-  border: 2px solid #ddd;
+  border: 2px solid transparent;
   border-radius: 8px;
   background: transparent;
   color: transparent;
+  caret-color: #6200ee;
   outline: none;
   transition: border-color 0.2s, box-shadow 0.2s;
   box-sizing: border-box;
@@ -69,16 +70,13 @@ body {
   -webkit-appearance: none;
   -moz-appearance: none;
   z-index: 1;
+  white-space: nowrap;
+  overflow: hidden;
 }
 
 .hidden-input::selection {
   background: transparent;
   color: transparent;
-}
-
-.hidden-input:focus {
-  border-color: #6200ee;
-  box-shadow: 0 0 0 3px rgba(98, 0, 238, 0.15);
 }
 
 #text-input {
@@ -91,12 +89,18 @@ body {
   text-align: center;
   color: #333;
   pointer-events: none;
-  white-space: pre-wrap;
-  word-break: break-word;
+  white-space: nowrap;
+  text-overflow: ellipsis;
   z-index: 0;
   box-sizing: border-box;
   background: #fff;
   border-radius: 8px;
+  border: 2px solid #ddd;
+}
+
+.input-wrapper:focus-within #text-input {
+  border-color: #6200ee;
+  box-shadow: 0 0 0 3px rgba(98, 0, 238, 0.15);
 }
 
 #text-input:empty::before {
@@ -156,7 +160,7 @@ body {
   to {
     transform: scale(4);
     opacity: 0;
-  } 
+  }
 }
 
 .letter {
