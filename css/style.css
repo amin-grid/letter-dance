@@ -40,12 +40,17 @@ body {
   text-align: center;
 }
 
-#text-input {
-  display: block;
+.input-wrapper {
+  position: relative;
+  display: inline-block;
   width: 100%;
   max-width: 400px;
-  min-height: 3.5rem;
   margin: 0 auto 1.5rem;
+}
+
+.hidden-input {
+  width: 100%;
+  min-height: 3.5rem;
   padding: 0.75rem 1rem;
   font-family: inherit;
   font-size: 1.25rem;
@@ -57,20 +62,32 @@ body {
   color: #333;
   outline: none;
   transition: border-color 0.2s, box-shadow 0.2s;
-  white-space: pre-wrap;
-  word-break: break-word;
 }
 
-#text-input:focus {
+.hidden-input:focus {
   border-color: #6200ee;
   box-shadow: 0 0 0 3px rgba(98, 0, 238, 0.15);
 }
 
-#text-input:empty:not(:focus)::before {
-  content: attr(data-placeholder);
+#text-input {
+  position: absolute;
+  inset: 0;
+  padding: 0.75rem 1rem;
+  font-family: inherit;
+  font-size: 1.25rem;
+  font-weight: 600;
+  text-align: center;
+  color: #333;
+  pointer-events: none;
+  white-space: pre-wrap;
+  word-break: break-word;
+  z-index: 0;
+}
+
+#text-input:empty::before {
+  content: "Type your text...";
   color: #999;
   font-weight: 400;
-  pointer-events: none;
 }
 
 #text-input .letter {

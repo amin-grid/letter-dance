@@ -1,11 +1,9 @@
 const btn = document.getElementById('btn');
+const hiddenInput = document.getElementById('hidden-input');
 const textInput = document.getElementById('text-input');
 const MAX_LENGTH = 50;
-let isComposing = false;
 
 function splitTextIntoLetters(text) {
-  if (isComposing) return;
-  isComposing = true;
   textInput.textContent = '';
   const letters = text.split('');
   letters.forEach(char => {
@@ -14,34 +12,14 @@ function splitTextIntoLetters(text) {
     span.textContent = char === ' ' ? '\u00A0' : char;
     textInput.appendChild(span);
   });
-  isComposing = false;
-}
-
-function getPlainText() {
-  return textInput.textContent;
 }
 
 // Initial split
-splitTextIntoLetters('HELLO WORLD');
+splitTextIntoLetters(hiddenInput.value);
 
-// Handle input - re-split on any change
-textInput.addEventListener('input', () => {
-  const text = getPlainText().slice(0, MAX_LENGTH);
-  splitTextIntoLetters(text);
-});
-
-// Prevent newlines on Enter
-textInput.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter') {
-    e.preventDefault();
-  }
-});
-
-// Strip formatting on paste
-textInput.addEventListener('paste', (e) => {
-  e.preventDefault();
-  const text = e.clipboardData.getData('text').slice(0, MAX_LENGTH);
-  splitTextIntoLetters(text);
+// Sync mirror on hidden input change
+hiddenInput.addEventListener('input', () => {
+  splitTextIntoLetters(hiddenInput.value.slice(0, MAX_LENGTH));
 });
 
 function jumpLetter(letterElement) {

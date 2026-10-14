@@ -8,7 +8,10 @@
 </head>
 <body>
   <div class="container">
-    <div id="text-input" class="text-input" contenteditable="true" data-placeholder="Type your text..." role="textbox" aria-multiline="false"></div>
+    <div class="input-wrapper">
+      <input type="text" id="hidden-input" class="hidden-input" value="HELLO WORLD" maxlength="50" spellcheck="false" aria-label="Text to animate">
+      <div id="text-input" class="text-input" aria-hidden="true"></div>
+    </div>
     <button class="btn" id="btn">Click Me</button>
   </div>
   <script src="js/script.js"></script>
