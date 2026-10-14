@@ -2,6 +2,32 @@ const btn = document.getElementById('btn');
 const hiddenInput = document.getElementById('hidden-input');
 const textInput = document.getElementById('text-input');
 const MAX_LENGTH = 50;
+let dynamicMaxLength = MAX_LENGTH;
+
+function calculateMaxLength() {
+  const wrapper = document.querySelector('.input-wrapper');
+  const style = getComputedStyle(wrapper);
+  const width = wrapper.clientWidth;
+  const padding = parseFloat(style.paddingLeft) + parseFloat(style.paddingRight);
+  const availableWidth = width - padding;
+  
+  // Create temporary span to measure character width
+  const measure = document.createElement('span');
+  measure.style.visibility = 'hidden';
+  measure.style.position = 'absolute';
+  measure.style.fontFamily = getComputedStyle(textInput).fontFamily;
+  measure.style.fontSize = getComputedStyle(textInput).fontSize;
+  measure.style.fontWeight = '600';
+  measure.style.whiteSpace = 'nowrap';
+  measure.textContent = 'M'; // Widest typical character
+  document.body.appendChild(measure);
+  const charWidth = measure.getBoundingClientRect().width;
+  document.body.removeChild(measure);
+  
+  const maxChars = Math.max(1, Math.floor(availableWidth / charWidth));
+  dynamicMaxLength = Math.min(MAX_LENGTH, maxChars);
+  hiddenInput.maxLength = dynamicMaxLength;
+}
 
 function splitTextIntoLetters(text) {
   textInput.textContent = '';
@@ -33,9 +59,15 @@ function clearSelection() {
 // Initial split
 splitTextIntoLetters(hiddenInput.value);
 
+// Calculate initial max length
+calculateMaxLength();
+
+// Recalculate on resize
+window.addEventListener('resize', calculateMaxLength);
+
 // Sync mirror on hidden input change
 hiddenInput.addEventListener('input', () => {
-  splitTextIntoLetters(hiddenInput.value.slice(0, MAX_LENGTH));
+  splitTextIntoLetters(hiddenInput.value.slice(0, dynamicMaxLength));
 });
 
 // Sync selection visually on mirror
