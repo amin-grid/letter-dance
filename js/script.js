@@ -1,15 +1,24 @@
 const btn = document.getElementById('btn');
 const textElement = document.getElementById('text');
-const textContent = textElement.textContent;
-const letters = textContent.split('');
+const textInput = document.getElementById('text-input');
 
-textElement.textContent = '';
+function splitTextIntoLetters(text) {
+  textElement.textContent = '';
+  const letters = text.split('');
+  letters.forEach(char => {
+    const span = document.createElement('span');
+    span.className = 'letter';
+    span.textContent = char === ' ' ? '\u00A0' : char;
+    textElement.appendChild(span);
+  });
+}
 
-letters.forEach(char => {
-  const span = document.createElement('span');
-  span.className = 'letter';
-  span.textContent = char === ' ' ? '\u00A0' : char;
-  textElement.appendChild(span);
+// Initial split
+splitTextIntoLetters(textInput.value);
+
+// Re-split on input change
+textInput.addEventListener('input', () => {
+  splitTextIntoLetters(textInput.value);
 });
 
 function jumpLetter(letterElement) {
@@ -44,13 +53,13 @@ function jumpLetter(letterElement) {
   requestAnimationFrame(animate);
 }
 
-const letterSpans = document.querySelectorAll('.letter');
-
 let isDancing = false;
 
 function startDance() {
   if (isDancing) return;
   isDancing = true;
+
+  const letterSpans = document.querySelectorAll('.letter');
 
   btn.disabled = true;
   btn.style.cursor = 'not-allowed';
