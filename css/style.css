@@ -45,6 +45,7 @@ body {
   width: 100%;
   max-width: 400px;
   margin: 0 auto 1.5rem;
+  contain: layout;
 }
 
 .hidden-input {
@@ -59,8 +60,8 @@ body {
   text-align: center;
   border: 2px solid #ddd;
   border-radius: 8px;
-  background: #fff;
-  color: #333;
+  background: transparent;
+  color: transparent;
   outline: none;
   transition: border-color 0.2s, box-shadow 0.2s;
   box-sizing: border-box;
@@ -68,6 +69,11 @@ body {
   -webkit-appearance: none;
   -moz-appearance: none;
   z-index: 1;
+}
+
+.hidden-input::selection {
+  background: transparent;
+  color: transparent;
 }
 
 .hidden-input:focus {
@@ -89,6 +95,8 @@ body {
   word-break: break-word;
   z-index: 0;
   box-sizing: border-box;
+  background: #fff;
+  border-radius: 8px;
 }
 
 #text-input:empty::before {
@@ -101,6 +109,12 @@ body {
   display: inline-block;
   font-size: inherit;
   font-weight: 700;
+}
+
+#text-input .letter.selected {
+  background: #6200ee;
+  color: #fff;
+  border-radius: 2px;
 }
 
 .btn {

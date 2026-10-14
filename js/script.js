@@ -14,6 +14,22 @@ function splitTextIntoLetters(text) {
   });
 }
 
+function syncSelection() {
+  if (document.activeElement !== hiddenInput) return;
+  const start = hiddenInput.selectionStart;
+  const end = hiddenInput.selectionEnd;
+  if (start === end) return;
+
+  const spans = textInput.querySelectorAll('.letter');
+  spans.forEach((span, i) => {
+    span.classList.toggle('selected', i >= start && i < end);
+  });
+}
+
+function clearSelection() {
+  textInput.querySelectorAll('.letter.selected').forEach(s => s.classList.remove('selected'));
+}
+
 // Initial split
 splitTextIntoLetters(hiddenInput.value);
 
@@ -21,6 +37,10 @@ splitTextIntoLetters(hiddenInput.value);
 hiddenInput.addEventListener('input', () => {
   splitTextIntoLetters(hiddenInput.value.slice(0, MAX_LENGTH));
 });
+
+// Sync selection visually on mirror
+document.addEventListener('selectionchange', syncSelection);
+hiddenInput.addEventListener('blur', clearSelection);
 
 function jumpLetter(letterElement) {
   const GRAVITY = 1500;
