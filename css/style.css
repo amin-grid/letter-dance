@@ -39,6 +39,10 @@ body {
   transform: scale(0.97);
 }
 
+.btn.dancing:active {
+  transform: scale(1);
+}
+
 .ripple {
   position: absolute;
   border-radius: 50%;

@@ -53,8 +53,9 @@ function startDance() {
   isDancing = true;
 
   btn.disabled = true;
-  btn.style.opacity = '0.6';
   btn.style.cursor = 'not-allowed';
+
+  setTimeout(() => btn.classList.add('dancing'), 0);
 
   letterSpans.forEach((letter, index) => {
     const delay = index * 150;
@@ -66,6 +67,7 @@ function startDance() {
   const totalDuration = letterSpans.length * 150 + 1000;
   setTimeout(() => {
     isDancing = false;
+    btn.classList.remove('dancing');
     btn.disabled = false;
     btn.style.opacity = '1';
     btn.style.cursor = 'pointer';
