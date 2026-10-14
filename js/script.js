@@ -1,8 +1,11 @@
 const btn = document.getElementById('btn');
 const textInput = document.getElementById('text-input');
 const MAX_LENGTH = 50;
+let isComposing = false;
 
 function splitTextIntoLetters(text) {
+  if (isComposing) return;
+  isComposing = true;
   textInput.textContent = '';
   const letters = text.split('');
   letters.forEach(char => {
@@ -11,6 +14,7 @@ function splitTextIntoLetters(text) {
     span.textContent = char === ' ' ? '\u00A0' : char;
     textInput.appendChild(span);
   });
+  isComposing = false;
 }
 
 function getPlainText() {
@@ -23,9 +27,7 @@ splitTextIntoLetters('HELLO WORLD');
 // Handle input - re-split on any change
 textInput.addEventListener('input', () => {
   const text = getPlainText().slice(0, MAX_LENGTH);
-  if (text !== getPlainText()) {
-    splitTextIntoLetters(text);
-  }
+  splitTextIntoLetters(text);
 });
 
 // Prevent newlines on Enter
