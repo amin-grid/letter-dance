@@ -1,8 +1,10 @@
 const { test, expect } = require('@playwright/test');
 
-// Baseline behaviour of the letter-dance page.
-// These tests lock current behaviour BEFORE any refactor so regressions
-// are caught. They intentionally describe what the page does today.
+// Baseline behaviour of the letter-dance page under the
+// Layer Swapping / Temporal Decoupling architecture:
+// - idle: the input is 100% native (visible text, native caret/selection,
+//   native placeholder), the animation stage is dormant and empty.
+// - animating: an ephemeral stage over the input dances, then is torn down.
 
 test.describe('letter-dance baseline', () => {
   test.beforeEach(async ({ page }) => {
@@ -12,63 +14,78 @@ test.describe('letter-dance baseline', () => {
   test('page loads with title, default text and button', async ({ page }) => {
     await expect(page).toHaveTitle('Letter Dance');
 
-    const hiddenInput = page.locator('#hidden-input');
-    await expect(hiddenInput).toHaveValue('HELLO WORLD');
+    const textInput = page.locator('#text-input');
+    await expect(textInput).toHaveValue('HELLO WORLD');
 
-    // Mirror splits every char (incl. space) into .letter spans.
-    const letters = page.locator('#text-input .letter');
-    await expect(letters).toHaveCount('HELLO WORLD'.length);
-    await expect(letters.first()).toHaveText('H');
+    // Idle: native visible text, empty dormant stage.
+    await expect(textInput).toBeVisible();
+    const color = await textInput.evaluate((el) => getComputedStyle(el).color);
+    expect(color).not.toBe('rgba(0, 0, 0, 0)');
+    await expect(page.locator('#animation-stage .letter')).toHaveCount(0);
+    await expect(page.locator('.input-wrapper')).toHaveAttribute('data-state', 'idle');
 
     await expect(page.locator('#btn')).toHaveText('Click Me');
     await expect(page.locator('#btn')).toBeEnabled();
   });
 
-  test('typing in the input re-splits the mirror', async ({ page }) => {
-    const hiddenInput = page.locator('#hidden-input');
-    await hiddenInput.fill('AB');
+  test('typing in the input does not build animation DOM', async ({ page }) => {
+    const textInput = page.locator('#text-input');
+    await textInput.fill('AB');
+    await expect(textInput).toHaveValue('AB');
 
-    const letters = page.locator('#text-input .letter');
-    await expect(letters).toHaveCount(2);
-    await expect(letters.nth(0)).toHaveText('A');
-    await expect(letters.nth(1)).toHaveText('B');
+    // No live mirroring: the stage stays empty while editing.
+    await expect(page.locator('#animation-stage .letter')).toHaveCount(0);
+    await expect(page.locator('#animation-stage')).toBeHidden();
   });
 
-  test('spaces are rendered as non-breaking spaces', async ({ page }) => {
-    await page.locator('#hidden-input').fill('A B');
-
-    const letters = page.locator('#text-input .letter');
-    await expect(letters).toHaveCount(3);
-    await expect(letters.nth(1)).toHaveText('\u00A0');
-  });
-
-  test('empty input shows placeholder', async ({ page }) => {
-    await page.locator('#hidden-input').fill('');
-    await expect(page.locator('#text-input .letter')).toHaveCount(0);
-
-    const placeholder = await page.evaluate(() => {
-      const el = document.querySelector('#text-input');
-      return window.getComputedStyle(el, '::before').content;
+  test('selection is fully native (no synthetic highlight)', async ({ page }) => {
+    const textInput = page.locator('#text-input');
+    await textInput.fill('ABC');
+    await textInput.focus();
+    await page.evaluate(() => {
+      document.getElementById('text-input').setSelectionRange(0, 2);
     });
-    expect(placeholder).toContain('Type your text...');
+
+    // Native selection range is intact...
+    const selection = await textInput.evaluate((el) => [
+      el.selectionStart,
+      el.selectionEnd,
+    ]);
+    expect(selection).toEqual([0, 2]);
+    // ...and no synthetic highlight elements exist.
+    await expect(page.locator('.letter.selected')).toHaveCount(0);
+    await expect(page.locator('#animation-stage .letter')).toHaveCount(0);
   });
 
-  test('clicking the button triggers a cascading dance and disables the button', async ({
+  test('empty input shows native placeholder', async ({ page }) => {
+    const textInput = page.locator('#text-input');
+    await textInput.fill('');
+    await expect(page.locator('#animation-stage .letter')).toHaveCount(0);
+    await expect(textInput).toHaveAttribute('placeholder', 'Type your text...');
+  });
+
+  test('clicking the button builds an ephemeral stage, dances, then tears it down', async ({
     page,
   }) => {
     const btn = page.locator('#btn');
-    const letters = page.locator('#text-input .letter');
+    const wrapper = page.locator('.input-wrapper');
+    const stage = page.locator('#animation-stage');
 
     await btn.click();
 
-    // Button is disabled while dancing.
+    // Animating state: button disabled, wrapper flagged, stage populated
+    // from a snapshot of the input value.
     await expect(btn).toBeDisabled();
     await expect(btn).toHaveClass(/dancing/);
+    await expect(wrapper).toHaveAttribute('data-state', 'animating');
+    const stageLetters = stage.locator('.letter');
+    await expect(stageLetters).toHaveCount('HELLO WORLD'.length);
+    await expect(stageLetters.first()).toHaveText('H');
+    await expect(stageLetters.nth(5)).toHaveText('\u00A0');
 
     // Letters animate: at least the first letter should leave y=0 quickly.
-    // Wait for any non-identity transform on the first letter.
     await page.waitForFunction(() => {
-      const first = document.querySelector('#text-input .letter');
+      const first = document.querySelector('#animation-stage .letter');
       if (!first) return false;
       const t = first.style.transform;
       return t !== '' && t !== 'translateY(0)' && t !== 'translateY(0px)';
@@ -77,44 +94,47 @@ test.describe('letter-dance baseline', () => {
     // Ripple element is created on click and removed after animation.
     await expect(page.locator('#btn .ripple')).toHaveCount(0, { timeout: 3000 });
 
-    // After the full cascade the button is re-enabled. Default text
-    // "HELLO WORLD" (11 chars): 11*150 + 1000 = 2650ms, allow margin.
+    // After the full cascade ("HELLO WORLD", 11 chars):
+    // 11*150 + 1000 = 2650ms, allow margin.
     await expect(btn).toBeEnabled({ timeout: 8000 });
     await expect(btn).not.toHaveClass(/dancing/);
+    await expect(wrapper).toHaveAttribute('data-state', 'idle');
 
-    // All letters settle back at y=0.
-    const transforms = await letters.evaluateAll((els) =>
-      els.map((el) => el.style.transform)
-    );
-    for (const t of transforms) {
-      expect(['', 'translateY(0)', 'translateY(0px)']).toContain(t);
-    }
+    // Stage fully torn down; native input value untouched and visible.
+    await expect(stageLetters).toHaveCount(0);
+    await expect(stage).toBeHidden();
+    await expect(page.locator('#text-input')).toHaveValue('HELLO WORLD');
   });
 
   test('input enforces a maxlength (dynamic, capped at 50)', async ({ page }) => {
-    const maxLength = await page.locator('#hidden-input').evaluate((el) => el.maxLength);
+    const maxLength = await page.locator('#text-input').evaluate((el) => el.maxLength);
     expect(maxLength).toBeGreaterThan(0);
     expect(maxLength).toBeLessThanOrEqual(50);
 
     // Typing beyond maxlength is truncated by the browser.
-    await page.locator('#hidden-input').fill('x'.repeat(60));
-    const value = await page.locator('#hidden-input').inputValue();
+    await page.locator('#text-input').fill('x'.repeat(60));
+    const value = await page.locator('#text-input').inputValue();
     expect(value.length).toBeLessThanOrEqual(50);
-    await expect(page.locator('#text-input .letter')).toHaveCount(value.length);
+    // Still no animation DOM after typing.
+    await expect(page.locator('#animation-stage .letter')).toHaveCount(0);
   });
 
-  test('selection in input highlights mirrored letters', async ({ page }) => {
-    const hiddenInput = page.locator('#hidden-input');
-    await hiddenInput.fill('ABC');
-    await hiddenInput.focus();
-    await page.evaluate(() => {
-      const el = document.getElementById('hidden-input');
-      el.setSelectionRange(0, 2);
-      // selectionchange fires async; dispatch to be deterministic in test
-      document.dispatchEvent(new Event('selectionchange'));
-    });
+  test('input text is hidden only while animating', async ({ page }) => {
+    const textInput = page.locator('#text-input');
 
-    const selected = page.locator('#text-input .letter.selected');
-    await expect(selected).toHaveCount(2);
+    const idleColor = await textInput.evaluate((el) => getComputedStyle(el).color);
+    expect(idleColor).not.toBe('rgba(0, 0, 0, 0)');
+
+    await page.locator('#btn').click();
+    await expect(page.locator('.input-wrapper')).toHaveAttribute(
+      'data-state',
+      'animating'
+    );
+    const animatingColor = await textInput.evaluate((el) => getComputedStyle(el).color);
+    expect(animatingColor).toBe('rgba(0, 0, 0, 0)');
+
+    await expect(page.locator('#btn')).toBeEnabled({ timeout: 8000 });
+    const restoredColor = await textInput.evaluate((el) => getComputedStyle(el).color);
+    expect(restoredColor).toBe(idleColor);
   });
 });

@@ -1,7 +1,7 @@
 const { test, expect } = require('@playwright/test');
 
-// Post-refactor behaviour: guards the fixes and guarantees, not just the
-// original baseline. If any of these fail, a refactor regressed behaviour.
+// Behavioural guarantees under Layer Swapping / Temporal Decoupling:
+// the editing surface and the animation surface never coexist.
 
 test.describe('letter-dance behaviour', () => {
   test.beforeEach(async ({ page }) => {
@@ -14,31 +14,31 @@ test.describe('letter-dance behaviour', () => {
 
   test('rapid clicks during a dance are ignored (single cascade)', async ({ page }) => {
     const btn = page.locator('#btn');
-    // Triple-click quickly; guard must prevent overlapping dances.
+    // Triple-click quickly; the state guard must prevent overlapping dances.
     await btn.click();
     await btn.click({ force: true }).catch(() => {});
     await btn.click({ force: true }).catch(() => {});
 
-    // Still exactly one dance: button re-enables after one cascade.
+    // Still exactly one dance: button re-enables after one cascade,
+    // state returns to idle, stage is torn down.
     await expect(btn).toBeEnabled({ timeout: 8000 });
     await expect(btn).not.toHaveClass(/dancing/);
-    const transforms = await page
-      .locator('#text-input .letter')
-      .evaluateAll((els) => els.map((el) => el.style.transform));
-    for (const t of transforms) {
-      expect(['', 'translateY(0)', 'translateY(0px)']).toContain(t);
-    }
+    await expect(page.locator('.input-wrapper')).toHaveAttribute('data-state', 'idle');
+    await expect(page.locator('#animation-stage .letter')).toHaveCount(0);
   });
 
   test('button is re-enabled even with empty text (no letters)', async ({ page }) => {
-    await page.locator('#hidden-input').fill('');
+    await page.locator('#text-input').fill('');
     await page.locator('#btn').click();
     await expect(page.locator('#btn')).toBeEnabled({ timeout: 5000 });
+    await expect(page.locator('.input-wrapper')).toHaveAttribute('data-state', 'idle');
+    await expect(page.locator('#animation-stage .letter')).toHaveCount(0);
   });
 
   test('ripple element never leaks (removed after animation)', async ({ page }) => {
     await page.locator('#btn').click();
     await expect(page.locator('#btn .ripple')).toHaveCount(0, { timeout: 3000 });
+    await expect(page.locator('#btn')).toBeEnabled({ timeout: 8000 });
   });
 
   test('disabled button has not-allowed cursor via CSS', async ({ page }) => {
@@ -50,42 +50,37 @@ test.describe('letter-dance behaviour', () => {
     await expect(btn).toBeEnabled({ timeout: 8000 });
   });
 
-  test('collapsing the selection clears mirror highlight', async ({ page }) => {
-    const hiddenInput = page.locator('#hidden-input');
-    await hiddenInput.fill('ABC');
-    await hiddenInput.focus();
-    await page.evaluate(() => {
-      document.getElementById('hidden-input').setSelectionRange(0, 2);
-      document.dispatchEvent(new Event('selectionchange'));
-    });
-    await expect(page.locator('#text-input .letter.selected')).toHaveCount(2);
-
-    // Collapse the selection -> highlight must clear (old code left it stale).
-    await page.evaluate(() => {
-      const el = document.getElementById('hidden-input');
-      el.setSelectionRange(1, 1);
-      document.dispatchEvent(new Event('selectionchange'));
-    });
-    await expect(page.locator('#text-input .letter.selected')).toHaveCount(0);
+  test('input ignores pointer events while animating', async ({ page }) => {
+    await page.locator('#btn').click();
+    await expect(page.locator('.input-wrapper')).toHaveAttribute(
+      'data-state',
+      'animating'
+    );
+    const pointerEvents = await page
+      .locator('#text-input')
+      .evaluate((el) => getComputedStyle(el).pointerEvents);
+    expect(pointerEvents).toBe('none');
+    await expect(page.locator('#btn')).toBeEnabled({ timeout: 8000 });
   });
 
-  test('typing after a selection clears stale highlight', async ({ page }) => {
-    const hiddenInput = page.locator('#hidden-input');
-    await hiddenInput.fill('ABC');
-    await hiddenInput.focus();
-    await page.evaluate(() => {
-      document.getElementById('hidden-input').setSelectionRange(0, 3);
-      document.dispatchEvent(new Event('selectionchange'));
-    });
-    await expect(page.locator('#text-input .letter.selected')).toHaveCount(3);
+  test('stage snapshots the value at click time', async ({ page }) => {
+    const textInput = page.locator('#text-input');
+    await textInput.fill('ABC');
+    await page.locator('#btn').click();
 
-    await hiddenInput.press('Backspace');
-    await expect(page.locator('#text-input .letter.selected')).toHaveCount(0);
+    // Stage reflects the clicked-time value...
+    const stageLetters = page.locator('#animation-stage .letter');
+    await expect(stageLetters).toHaveCount(3);
+
+    // ...and the input value survives the dance untouched.
+    await expect(page.locator('#btn')).toBeEnabled({ timeout: 8000 });
+    await expect(textInput).toHaveValue('ABC');
+    await expect(stageLetters).toHaveCount(0);
   });
 
   test('maxlength updates on resize and stays within [1, 50]', async ({ page }) => {
     const maxLength = async () =>
-      page.locator('#hidden-input').evaluate((el) => el.maxLength);
+      page.locator('#text-input').evaluate((el) => el.maxLength);
 
     await page.setViewportSize({ width: 1200, height: 800 });
     const wide = await maxLength();
@@ -100,18 +95,20 @@ test.describe('letter-dance behaviour', () => {
   });
 
   test('cascade timing: letters start in order', async ({ page }) => {
-    await page.locator('#hidden-input').fill('ABCDE');
+    await page.locator('#text-input').fill('ABCDE');
     await page.locator('#btn').click();
 
     // Sample transforms shortly after click: first letter should already
     // be moving while the last one has not started yet (4*150=600ms delay).
     await page.waitForTimeout(150);
     const snapshot = await page
-      .locator('#text-input .letter')
+      .locator('#animation-stage .letter')
       .evaluateAll((els) => els.map((el) => el.style.transform));
+    expect(snapshot).toHaveLength(5);
     expect(snapshot[0]).not.toBe('');
     expect(snapshot[4]).toBe('');
 
     await expect(page.locator('#btn')).toBeEnabled({ timeout: 8000 });
+    await expect(page.locator('#animation-stage .letter')).toHaveCount(0);
   });
 });
