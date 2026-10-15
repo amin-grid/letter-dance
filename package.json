@@ -2,9 +2,9 @@
   "name": "letter-dance",
   "version": "1.0.0",
   "description": "An interactive text animation where clicking a button triggers a cascading letter‑jump effect.",
-  "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "python3 -m http.server 8080 --directory .",
+    "test": "playwright test"
   },
   "repository": {
     "type": "git",
@@ -12,7 +12,7 @@
   },
   "keywords": [],
   "author": "",
-  "license": "ISC",
+  "license": "MIT",
   "type": "commonjs",
   "bugs": {
     "url": "https://github.com/amin-grid/letter-dance/issues"
