@@ -111,4 +111,47 @@ test.describe('letter-dance behaviour', () => {
     await expect(page.locator('#btn')).toBeEnabled({ timeout: 8000 });
     await expect(page.locator('#animation-stage .letter')).toHaveCount(0);
   });
+
+  test('no vertical layout shift when swapping to the animation stage', async ({
+    page,
+  }) => {
+    // Native input text-top: browsers vertically center the text line
+    // inside the content box: top + border + padding + (contentH - lineH)/2.
+    const nativeTextTop = await page.locator('#text-input').evaluate((el) => {
+      const rect = el.getBoundingClientRect();
+      const style = getComputedStyle(el);
+      const borderTop = parseFloat(style.borderTopWidth);
+      const paddingTop = parseFloat(style.paddingTop);
+      const paddingBottom = parseFloat(style.paddingBottom);
+      const borderBottom = parseFloat(style.borderBottomWidth);
+      const contentH = rect.height - borderTop - paddingTop - paddingBottom - borderBottom;
+      const lineH = parseFloat(style.lineHeight);
+      return rect.top + borderTop + paddingTop + (contentH - lineH) / 2;
+    });
+
+    await page.locator('#text-input').fill('ABCDE');
+    await page.locator('#btn').click();
+    await expect(page.locator('.input-wrapper')).toHaveAttribute(
+      'data-state',
+      'animating'
+    );
+
+    // Sample the LAST letter: it starts after 4*150=600ms, so it sits
+    // perfectly still in the stage's line box during our sampling window.
+    // All letters share one line box, so this measures swap alignment.
+    const stageTextTop = await page
+      .locator('#animation-stage .letter')
+      .last()
+      .evaluate((el) => {
+        if (el.style.transform !== '') {
+          throw new Error('letter already jumping; sample was too late');
+        }
+        return el.getBoundingClientRect().top;
+      });
+
+    // Sub-pixel tolerance: the swap must be imperceptible.
+    expect(Math.abs(stageTextTop - nativeTextTop)).toBeLessThan(1);
+
+    await expect(page.locator('#btn')).toBeEnabled({ timeout: 8000 });
+  });
 });

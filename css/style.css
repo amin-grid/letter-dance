@@ -78,11 +78,16 @@ body {
 
 /* Ephemeral animation stage: fully dormant until the wrapper
    enters the animating state. Letters overflow visibly so jumps
-   are never clipped. */
+   are never clipped.
+   Pixel-twin of .text-input: same border-box (transparent border),
+   same padding, same font — plus flex centering to match the native
+   input's vertical text centering. The idle→animating swap must have
+   zero layout shift. */
 .animation-stage {
   grid-area: 1 / 1;
   display: none;
   padding: 0.75rem 1rem;
+  border: 2px solid transparent;
   font-family: inherit;
   font-size: 1.25rem;
   font-weight: 700;
@@ -95,7 +100,9 @@ body {
 }
 
 .input-wrapper[data-state="animating"] .animation-stage {
-  display: block;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 /* While animating, the native input yields visually (value untouched)
