@@ -1,8 +1,8 @@
 # Letter Dance — Architecture & Refactor Notes
 
 > An interactive text animation where clicking a button triggers a cascading letter‑jump effect.
-> This document explains **what the project looked like before**, **what was refactored and why**,
-> and contains the **full source of every major file** afterwards.
+> This document explains the **Layer Swapping / Temporal Decoupling** architecture,
+> **what was refactored and why**, and contains the **full source of every major file**.
 
 ---
 
@@ -20,7 +20,7 @@
    - [css/style.css](#cssstylecss)
    - [js/main.js](#jsmainjs)
    - [js/config.js](#jsconfigjs)
-   - [js/mirror.js](#jsmirrorjs)
+   - [js/stage.js](#jsstagejs)
    - [js/dance.js](#jsdancejs)
    - [js/ripple.js](#jsripplejs)
    - [js/maxlength.js](#jsmaxlengthjs)
@@ -53,20 +53,20 @@ No build step is needed — the site is plain HTML/CSS/JS loaded as native ES mo
 
 ```
 letter-dance/
-├── index.html              # Markup: input + mirror overlay + button
+├── index.html              # Markup: native input + dormant stage + button
 ├── css/
-│   └── style.css           # Fonts, layout, mirror, button, ripple
+│   └── style.css           # Fonts, native input, state-gated stage, button, ripple
 ├── js/
-│   ├── main.js             # Entry point: wiring only (listeners + orchestration)
+│   ├── main.js             # Entry point: idle -> animating -> idle state machine
 │   ├── config.js           # Single source of truth for constants
-│   ├── mirror.js           # Render letters, sync/clear selection highlight
+│   ├── stage.js            # Ephemeral stage: build on click, teardown after dance
 │   ├── dance.js            # Physics jump (Promise-based) + cascade
 │   ├── ripple.js           # Material-style click ripple
 │   └── maxlength.js        # Dynamic maxlength via canvas measurement
 ├── fonts/                  # Local Fredoka .ttf files (offline support)
 ├── tests/
-│   ├── baseline.spec.js    # Pre-refactor behaviour lock (7 tests)
-│   └── behaviour.spec.js   # Post-refactor guarantees (8 tests)
+│   ├── baseline.spec.js    # Native-idle + ephemeral-stage behaviour (7 tests)
+│   └── behaviour.spec.js   # Decoupling guarantees (8 tests)
 ├── playwright.config.js    # Test runner + auto static server
 └── package.json            # npm scripts: start / test
 ```
@@ -75,119 +75,138 @@ letter-dance/
 
 ## 3. Architecture overview
 
-### The core trick: hidden input + visual mirror
+### Layer Swapping / Temporal Decoupling
 
-A plain `<input>` cannot animate individual letters, and a `contenteditable` div has
-notoriously bad cursor/selection behaviour. So the page overlays two elements in the
-same CSS Grid cell (`grid-area: 1 / 1`):
-
-1. **`.hidden-input`** (real `<input>`, `z-index: 1`, transparent text) — receives all
-   keyboard input, shows the caret, owns the true selection.
-2. **`#text-input`** (a `<div>`, `z-index: 0`, `pointer-events: none`) — renders the
-   same text as one `.letter` `<span>` per character so each letter can be animated
-   independently with `transform: translateY(...)`.
-
-JavaScript keeps them in sync:
+The key insight: **the user never needs to edit text and watch letters dance at
+the exact same millisecond.** Editing and animation are separated in *time* —
+only one layer is ever active:
 
 ```
-user types ──▶ input event ──▶ renderLetters(mirror, value)
-user selects ──▶ selectionchange ──▶ syncSelection(mirror, input)
+idle ──(button click)──▶ animating ──(dance resolves)──▶ idle
 ```
+
+**State 1 — Idle / Editing (the default).**
+`#text-input` is a completely normal, visible, native `<input>`: OS caret, native
+text selection, native placeholder, native `maxlength`. The `#animation-stage`
+overlay is `display: none` and empty — zero DOM cost, zero listeners, zero
+per-keystroke work. There is no mirroring of any kind.
+
+**State 2 — Animating (button click).**
+The wrapper flips to `data-state="animating"`. The input yields *visually only*
+(`color: transparent`, `caret-color: transparent`, `pointer-events: none` — its
+`value` is untouched), the stage becomes visible, `stage.js` snapshots the input
+string into ephemeral `.letter` spans, and `dance.js` runs the physics cascade
+on them. The button is disabled for the whole dance.
+
+**State 3 — Cleanup.**
+Once the `Promise.all` cascade resolves, `teardownStage()` removes every letter
+node (in a `finally`, so it always runs), the wrapper returns to `data-state="idle"`,
+and the button is re-enabled. No animation DOM survives the dance.
 
 ### The dance
 
-Clicking the button cascades a physics-based jump across the letters: letter `i`
-starts after `i × 150 ms`. Each jump integrates simple gravity
+Letter `i` starts jumping after `i × 150 ms`. Each jump integrates simple gravity
 (`vy += g·dt`, `y += vy·dt`) via `requestAnimationFrame` until the letter lands
-back at `y = 0`. The button is disabled for the whole cascade.
+back at `y = 0`, then its Promise resolves.
 
 ### Module dependency graph
 
 ```
-main.js ──┬──▶ mirror.js      (renderLetters, syncSelection, clearSelection)
+main.js ──┬──▶ stage.js       (buildStage, teardownStage)
           ├──▶ dance.js ──▶ config.js
           ├──▶ maxlength.js ──▶ config.js
           └──▶ ripple.js
 ```
 
-`main.js` does no work itself beyond wiring event listeners — every behaviour lives
-in a small, independently understandable module.
+`main.js` owns the state machine and event wiring; every behaviour lives in a
+small, independently understandable module. `config.js`, `dance.js`, and
+`ripple.js` are unchanged by the Layer Swapping refactor — only the editing
+surface and its orchestration were replaced.
 
 ---
 
 ## 4. What was refactored (and why)
 
-### Before
+### Before (two generations of the same flaw)
 
-- One 160-line `js/script.js` doing **everything**: mirror rendering, maxlength,
-  physics, cascade timing, ripple, and event wiring — with implicit globals and
-  module-level mutable state (`let dynamicMaxLength`, `let isDancing`).
-- Classic "big ball of JS in one file": hard to test, hard to reason about, easy
-  to break one feature while touching another.
+- **Generation 1:** one 160-line `js/script.js` doing everything (God file).
+- **Generation 2:** split into ES modules — but still built on the **twin-surface
+  live-mirroring** pattern: a transparent-text `<input>` stacked over a `<div>`
+  that re-rendered every keystroke, with native selection suppressed
+  (`::selection { background: transparent }`) and faked via synthetic `.selected`
+  classes. Editing fought the animation surface on every keystroke.
 
-### After
+### After (this refactor)
 
 | File | Responsibility |
 |---|---|
-| `js/config.js` | All constants: `MAX_LENGTH`, `GRAVITY`, `JUMP_FORCE`, `CASCADE_DELAY_MS`, `JUMP_TIMEOUT_MS`, `RIPPLE_DURATION_MS` |
-| `js/mirror.js` | Pure-ish rendering: `renderLetters()`, `syncSelection()`, `clearSelection()` |
-| `js/dance.js` | `jumpLetter()` returns a **Promise**; `danceLetters()` cascades with `Promise.all` + optional `AbortSignal` |
-| `js/ripple.js` | Ripple creation with leak-proof cleanup |
-| `js/maxlength.js` | Pure `computeMaxLength()` + canvas-based measurement (no DOM churn) |
-| `js/main.js` | Thin entry point: listeners + `startDance()` orchestration only |
+| `js/config.js` | All constants: `MAX_LENGTH`, `GRAVITY`, `JUMP_FORCE`, `CASCADE_DELAY_MS`, `JUMP_TIMEOUT_MS`, `RIPPLE_DURATION_MS` (unchanged) |
+| `js/stage.js` | **New.** `buildStage()` snapshots text into letters; `teardownStage()` wipes them. Replaces `mirror.js` (deleted). |
+| `js/dance.js` | `jumpLetter()` returns a **Promise**; `danceLetters()` cascades with `Promise.all` + optional `AbortSignal` (unchanged) |
+| `js/ripple.js` | Ripple creation with leak-proof cleanup (unchanged) |
+| `js/maxlength.js` | Pure `computeMaxLength()` + canvas measurement; now reads the **input's own** font (no mirror exists) |
+| `js/main.js` | Explicit `idle → animating → idle` state machine via `wrapper[data-state]`; no `input`/`selectionchange` listeners at all |
 
-Additional changes:
+Markup & style changes:
 
-- `js/script.js` → `js/main.js`, loaded as `<script type="module">`.
-- Added `package.json` (`npm start` / `npm test`), fixed license to MIT.
-- Added `playwright.config.js` with an automatic static file server.
-- Added 15 Playwright tests (see [Testing](#6-testing)).
-- CSS: disabled-button styling moved from JS inline styles into `:disabled` rules;
-  duplicate `.letter` rule removed; button padding fixed (`12px 12px` → `12px 24px`).
+- `#hidden-input.hidden-input` → `#text-input.text-input`: a clean native control
+  with `placeholder` and `maxlength` attributes; the fake `:empty::before`
+  placeholder is gone.
+- `#text-input` mirror `<div>` → `#animation-stage.animation-stage`: `display: none`
+  unless `.input-wrapper[data-state="animating"]`.
+- `color: transparent` now exists **only** under the `animating` state (plus the
+  benign `-webkit-tap-highlight-color`); `::selection` override and `.selected`
+  rules deleted.
+- Tests rewritten for the new architecture (see [Testing](#6-testing)).
 
 ---
 
 ## 5. Antipattern catalogue
 
-Each antipattern found in the original code, and its fix:
+Antipatterns eliminated across both refactors, and their fixes:
 
-1. **God file / no separation of concerns**
-   → Split into 6 single-responsibility ES modules.
+1. **Twin-surface live-mirroring (the fundamental flaw)** — a suppressed native
+   input (`color: transparent`, hacked `::selection`) permanently stacked over a
+   `<div>` re-rendered on every keystroke, with selection faked via synthetic
+   classes.
+   → **Layer Swapping / Temporal Decoupling**: one native input while editing;
+   one ephemeral stage while animating; never both. `mirror.js`,
+   `renderLetters`-on-`input`, the `selectionchange` listener, and every
+   `.selected` rule deleted.
 
-2. **Magic numbers** (`1500`, `-600`, `150`, `1000`, `50`, `600` scattered through
+2. **God file / no separation of concerns**
+   → Six single-responsibility ES modules.
+
+3. **Magic numbers** (`1500`, `-600`, `150`, `1000`, `50`, `600` scattered through
    the code) → `js/config.js` as the single source of truth.
 
-3. **Fire-and-forget timers** — the cascade used `setTimeout` per letter plus a
+4. **Fire-and-forget timers** — the cascade used `setTimeout` per letter plus a
    hand-computed `totalDuration = letters × 150 + 1000` to re-enable the button.
    Any physics change desynced the button (stuck disabled, or re-enabled early).
    → `jumpLetter()` returns a Promise; `danceLetters()` awaits `Promise.all`;
-   `startDance()` uses `try/finally` so the button **always** recovers.
+   `startDance()` uses `try/finally` so the button and state **always** recover.
 
-4. **Inline styles for state** (`btn.style.cursor`, `btn.style.opacity`)
-   → `:disabled` CSS rule (`cursor: not-allowed`, dimmed, no hover effect).
-
-5. **Stale-state bugs** — collapsing a selection or typing after selecting left the
-   blue mirror highlight stuck, because the old `syncSelection` early-returned when
-   `start === end`.
-   → `main.js` explicitly clears the highlight on collapsed selection, on every
-   `input` event, and on `blur`.
+5. **Inline styles for state** (`btn.style.cursor`, `btn.style.opacity`)
+   → `:disabled` CSS rule (`cursor: not-allowed`, dimmed, no hover effect);
+   input yield handled by the `data-state` selector, not JS styles.
 
 6. **Leaking DOM nodes** — the ripple was only removed on `animationend`, which
    never fires if the animation is interrupted (e.g. `display: none`, test env).
    → `{ once: true }` listener **plus** a timeout fallback; `ripple.remove()` is
-   idempotent so double-removal is safe.
+   idempotent so double-removal is safe. Stage letters are wiped in `finally`.
 
 7. **Layout thrash** — `calculateMaxLength()` appended a measuring `<span>` to the
    document, called `getComputedStyle` 3×, then removed the span — on **every**
    resize event.
    → Canvas 2D `measureText()` with a cached context (zero DOM churn), one
-   `getComputedStyle` per element, resize handler coalesced with `requestAnimationFrame`,
+   `getComputedStyle` call, resize handler coalesced with `requestAnimationFrame`,
    and the math extracted as pure `computeMaxLength()`.
 
-8. **Redundant work on every keystroke** — the mirror was re-split with an extra
-   `.slice(0, dynamicMaxLength)` even though the browser already enforces the native
-   `maxLength` attribute; each span was appended individually (N reflows).
-   → Single render via `DocumentFragment` (1 reflow), no redundant slicing.
+8. **Redundant work on every keystroke** — the mirror was re-split per keystroke
+   with an extra `.slice()` even though the browser enforces native `maxLength`;
+   each span appended individually (N reflows).
+   → No per-keystroke work at all: the browser owns editing natively; letters are
+   built once per dance via `DocumentFragment` (1 reflow).
 
 9. **Unbounded `dt`** — after a backgrounded tab, the huge `requestAnimationFrame`
    gap made `y += vy·dt` fling the letter thousands of pixels.
@@ -197,8 +216,8 @@ Each antipattern found in the original code, and its fix:
 10. **Dead / confusing code** — duplicate `.letter` CSS rule, asymmetric ripple
     positioning math, `setTimeout(..., 0)` just to add a class, `padding: 12px 12px`,
     `main: index.js` + wrong `ISC` license in `package.json`, two separate `click`
-    listeners on the same button.
-    → Removed, simplified, merged into one listener.
+    listeners on the same button, fake `:empty::before` placeholder.
+    → Removed, simplified, merged into one listener; native `placeholder` used.
 
 11. **No fail-fast** — a missing DOM id produced cryptic `Cannot read properties of
     null` errors.
@@ -211,26 +230,31 @@ Each antipattern found in the original code, and its fix:
 
 ### Strategy
 
-1. **Lock behaviour first**: `tests/baseline.spec.js` (7 tests) was written against
-   the *original* code and passed before any refactor — any regression would fail it.
-2. **Guard the fixes**: `tests/behaviour.spec.js` (8 tests) covers the new guarantees
-   (rapid-click guard, empty-text dance, ripple cleanup, disabled cursor,
-   selection-clear cases, resize bounds, cascade ordering) and fails on any uncaught
-   page error.
+1. **Native-idle lock**: `tests/baseline.spec.js` (7 tests) proves the input is
+   100% native while editing (visible text, native selection range, native
+   placeholder, no animation DOM on typing) and that a click builds an ephemeral
+   stage, dances, and tears everything down.
+2. **Decoupling guarantees**: `tests/behaviour.spec.js` (8 tests) proves the two
+   surfaces never coexist (state attribute, pointer-events, snapshot semantics,
+   teardown after every dance) and fails on any uncaught page error.
 3. Every refactor commit was verified green (`npx playwright test` → 15/15) before
    committing.
 
 ### Test list
 
-**baseline.spec.js** — page loads with title/default text/button; typing re-splits
-the mirror; spaces render as NBSP; empty input shows placeholder; click triggers a
-cascading dance and disables the button; maxlength enforced (≤ 50); selection
-highlights mirrored letters.
+**baseline.spec.js** — page loads with title/default text/button (native visible
+text, dormant empty stage, `data-state="idle"`); typing builds no animation DOM;
+selection is fully native (intact range, zero synthetic highlights); empty input
+shows native placeholder; click builds ephemeral stage (correct letters incl.
+NBSP space), dances, then tears down (idle state, hidden empty stage, value
+untouched); maxlength enforced (≤ 50, still no animation DOM); input text hidden
+only while animating (color transparent during, restored after).
 
-**behaviour.spec.js** — rapid clicks ignored (single cascade); button re-enabled
-with empty text; ripple never leaks; disabled cursor via CSS; collapsing selection
-clears highlight; typing after selection clears highlight; maxlength updates on
-resize within [1, 50]; letters start in cascade order.
+**behaviour.spec.js** — rapid clicks ignored (single cascade, teardown verified);
+button re-enabled with empty text; ripple never leaks; disabled cursor via CSS;
+input ignores pointer events while animating; stage snapshots the value at click
+time (input value survives untouched); maxlength updates on resize within
+[1, 50]; letters start in cascade order (first moving, last not yet).
 
 ---
 
@@ -239,6 +263,10 @@ resize within [1, 50]; letters start in cascade order.
 Small, individually verified commits (each green before committing):
 
 ```
+cc5b818 refactor: drop unused wrapperEl param, fix stale mirror comment
+dabad90 test: rewrite specs for Layer Swapping architecture (native idle, ephemeral stage)
+4eb2f7e refactor: replace live-mirroring with Layer Swapping / Temporal Decoupling
+d343cfa docs: add REFACTOR.md with refactor notes and full source
 7e35152 test: add post-refactor behaviour tests (cascade, ripple, selection, resize)
 f5ef528 refactor: move disabled button styling to CSS, fix padding, drop duplicate .letter rule
 283a0ae refactor: split script into ES modules (config, mirror, dance, ripple, maxlength, main)
@@ -265,9 +293,9 @@ d1495ba chore: init npm project and add Playwright dev dependency
 </head>
 <body>
   <div class="container">
-    <div class="input-wrapper">
-      <input type="text" id="hidden-input" class="hidden-input" value="HELLO WORLD" spellcheck="false" aria-label="Text to animate">
-      <div id="text-input" class="text-input" aria-hidden="true"></div>
+    <div class="input-wrapper" data-state="idle">
+      <input type="text" id="text-input" class="text-input" value="HELLO WORLD" spellcheck="false" aria-label="Text to animate" placeholder="Type your text..." maxlength="50">
+      <div id="animation-stage" class="animation-stage" aria-hidden="true"></div>
     </div>
     <button class="btn" id="btn">Click Me</button>
   </div>
@@ -329,77 +357,70 @@ body {
   contain: layout;
 }
 
-.hidden-input {
+.text-input {
   grid-area: 1 / 1;
   width: 100%;
   height: 3.5rem;
   padding: 0.75rem 1rem;
   font-family: inherit;
   font-size: 1.25rem;
-  font-weight: 600;
+  font-weight: 700;
   line-height: 1.2;
   text-align: center;
-  border: 2px solid transparent;
+  color: #333;
+  background: #fff;
+  border: 2px solid #ddd;
   border-radius: 8px;
-  background: transparent;
-  color: transparent;
-  caret-color: #6200ee;
   outline: none;
   transition: border-color 0.2s, box-shadow 0.2s;
-  box-sizing: border-box;
-  appearance: none;
-  -webkit-appearance: none;
-  -moz-appearance: none;
-  z-index: 1;
-  white-space: nowrap;
-  overflow: hidden;
 }
 
-.hidden-input::selection {
-  background: transparent;
-  color: transparent;
+.text-input:focus-visible {
+  border-color: #6200ee;
+  box-shadow: 0 0 0 3px rgba(98, 0, 238, 0.15);
 }
 
-#text-input {
+.text-input::placeholder {
+  color: #999;
+  font-weight: 400;
+}
+
+/* Ephemeral animation stage: fully dormant until the wrapper
+   enters the animating state. Letters overflow visibly so jumps
+   are never clipped. */
+.animation-stage {
   grid-area: 1 / 1;
+  display: none;
   padding: 0.75rem 1rem;
   font-family: inherit;
   font-size: 1.25rem;
-  font-weight: 600;
+  font-weight: 700;
   line-height: 1.2;
   text-align: center;
   color: #333;
   pointer-events: none;
   white-space: nowrap;
-  text-overflow: ellipsis;
-  z-index: 0;
   box-sizing: border-box;
-  background: #fff;
-  border-radius: 8px;
-  border: 2px solid #ddd;
 }
 
-.input-wrapper:focus-within #text-input {
-  border-color: #6200ee;
-  box-shadow: 0 0 0 3px rgba(98, 0, 238, 0.15);
+.input-wrapper[data-state="animating"] .animation-stage {
+  display: block;
 }
 
-#text-input:empty::before {
-  content: "Type your text...";
-  color: #999;
-  font-weight: 400;
+/* While animating, the native input yields visually (value untouched)
+   and ignores pointer input: editing and animation never overlap. */
+.input-wrapper[data-state="animating"] .text-input {
+  color: transparent;
+  caret-color: transparent;
+  pointer-events: none;
 }
 
-#text-input .letter {
+.input-wrapper[data-state="animating"] .text-input::placeholder {
+  color: transparent;
+}
+
+.animation-stage .letter {
   display: inline-block;
-  font-size: inherit;
-  font-weight: 700;
-}
-
-#text-input .letter.selected {
-  background: #6200ee;
-  color: #fff;
-  border-radius: 2px;
 }
 
 .btn {
@@ -453,45 +474,45 @@ body {
 ### js/main.js
 
 ```js
-// Entry point: wires the input mirror, maxlength, dance button, and ripple.
+// Entry point: explicit state machine for Layer Swapping / Temporal Decoupling.
+//
+//   idle ──(button click)──▶ animating ──(dance resolves)──▶ idle
+//
+// - idle:      the <input> is a fully native control (caret, selection,
+//              placeholder). The animation stage is dormant and empty.
+// - animating: the input yields visually, an ephemeral stage is built over
+//              it from a text snapshot, and the cascade runs on that stage.
+// Afterwards the stage is torn down and the input restored untouched.
 
 import { danceLetters } from './dance.js';
-import { clearSelection, renderLetters, syncSelection } from './mirror.js';
+import { buildStage, teardownStage } from './stage.js';
 import { updateMaxLength } from './maxlength.js';
 import { createRipple } from './ripple.js';
 
+const STATE_IDLE = 'idle';
+const STATE_ANIMATING = 'animating';
+
 const btn = document.getElementById('btn');
-const hiddenInput = document.getElementById('hidden-input');
 const textInput = document.getElementById('text-input');
+const stage = document.getElementById('animation-stage');
 const wrapper = document.querySelector('.input-wrapper');
 
-if (!btn || !hiddenInput || !textInput || !wrapper) {
+if (!btn || !textInput || !stage || !wrapper) {
   throw new Error('letter-dance: required DOM elements are missing');
 }
 
-// --- Input mirror -------------------------------------------------------
+function getState() {
+  return wrapper.dataset.state ?? STATE_IDLE;
+}
 
-renderLetters(textInput, hiddenInput.value);
-
-hiddenInput.addEventListener('input', () => {
-  renderLetters(textInput, hiddenInput.value);
-  clearSelection(textInput);
-});
-
-document.addEventListener('selectionchange', () => {
-  if (document.activeElement !== hiddenInput) return;
-  if (hiddenInput.selectionStart === hiddenInput.selectionEnd) {
-    clearSelection(textInput);
-    return;
-  }
-  syncSelection(textInput, hiddenInput);
-});
-hiddenInput.addEventListener('blur', () => clearSelection(textInput));
+function setState(next) {
+  wrapper.dataset.state = next;
+}
 
 // --- Dynamic maxlength ---------------------------------------------------
 
 function refreshMaxLength() {
-  updateMaxLength({ wrapperEl: wrapper, mirrorEl: textInput, inputEl: hiddenInput });
+  updateMaxLength({ inputEl: textInput });
 }
 
 refreshMaxLength();
@@ -509,19 +530,19 @@ window.addEventListener('resize', () => {
 
 // --- Dance ---------------------------------------------------------------
 
-let isDancing = false;
-
 async function startDance() {
-  if (isDancing) return;
-  isDancing = true;
+  if (getState() !== STATE_IDLE) return;
+  setState(STATE_ANIMATING);
 
   btn.disabled = true;
   btn.classList.add('dancing');
 
   try {
-    await danceLetters(textInput.querySelectorAll('.letter'));
+    const letters = buildStage(stage, textInput.value);
+    await danceLetters(letters);
   } finally {
-    isDancing = false;
+    teardownStage(stage);
+    setState(STATE_IDLE);
     btn.classList.remove('dancing');
     btn.disabled = false;
   }
@@ -555,20 +576,22 @@ export const JUMP_TIMEOUT_MS = 1000;
 export const RIPPLE_DURATION_MS = 600;
 ```
 
-### js/mirror.js
+### js/stage.js
 
 ```js
-// Letter-mirror: renders the hidden input's text as animatable letter spans
-// and keeps the visual selection in sync.
+// Ephemeral animation stage: builds letter spans on demand for the dance
+// and tears them down afterwards. Nothing here persists between dances —
+// during idle/editing the input is 100% native and this layer is dormant.
 
 const SPACE_SUBSTITUTE = '\u00A0';
 
 /**
- * Render `text` as one `.letter` span per character inside `mirrorEl`.
+ * Snapshot `text` into one `.letter` span per character inside `stageEl`.
  * Spaces become non-breaking spaces so they keep their width.
+ * Returns the created letter elements.
  */
-export function renderLetters(mirrorEl, text) {
-  mirrorEl.textContent = '';
+export function buildStage(stageEl, text) {
+  stageEl.textContent = '';
   const fragment = document.createDocumentFragment();
   for (const char of text) {
     const span = document.createElement('span');
@@ -576,25 +599,16 @@ export function renderLetters(mirrorEl, text) {
     span.textContent = char === ' ' ? SPACE_SUBSTITUTE : char;
     fragment.appendChild(span);
   }
-  mirrorEl.appendChild(fragment);
+  stageEl.appendChild(fragment);
+  return stageEl.querySelectorAll('.letter');
 }
 
 /**
- * Highlight mirrored letters in the [start, end) range to match the
- * hidden input's text selection.
+ * Completely teardown the stage: remove all letter nodes so no
+ * animation DOM survives after the dance.
  */
-export function syncSelection(mirrorEl, inputEl) {
-  const { selectionStart: start, selectionEnd: end } = inputEl;
-  const spans = mirrorEl.querySelectorAll('.letter');
-  spans.forEach((span, i) => {
-    span.classList.toggle('selected', i >= start && i < end);
-  });
-}
-
-export function clearSelection(mirrorEl) {
-  mirrorEl
-    .querySelectorAll('.letter.selected')
-    .forEach((el) => el.classList.remove('selected'));
+export function teardownStage(stageEl) {
+  stageEl.textContent = '';
 }
 ```
 
@@ -719,7 +733,7 @@ function getMeasureContext() {
 }
 
 /**
- * Compute how many characters fit in `wrapperEl`, given the mirror's font.
+ * Compute how many characters fit in `availableWidth`, given the input's font.
  * Returns a value in [1, MAX_LENGTH]. Pure (no DOM side effects).
  */
 export function computeMaxLength(availableWidth, font) {
@@ -732,14 +746,13 @@ export function computeMaxLength(availableWidth, font) {
 
 /**
  * Recompute and apply the maxlength for `inputEl` based on the current
- * width of `wrapperEl` and font of `mirrorEl`.
+ * width of `wrapperEl` and the input's own font.
  */
-export function updateMaxLength({ wrapperEl, mirrorEl, inputEl }) {
-  const style = getComputedStyle(wrapperEl);
+export function updateMaxLength({ inputEl }) {
+  const style = getComputedStyle(inputEl);
   const padding = parseFloat(style.paddingLeft) + parseFloat(style.paddingRight);
-  const availableWidth = wrapperEl.clientWidth - padding;
-  const mirrorStyle = getComputedStyle(mirrorEl);
-  const font = `${mirrorStyle.fontWeight} ${mirrorStyle.fontSize} ${mirrorStyle.fontFamily}`;
+  const availableWidth = inputEl.clientWidth - padding;
+  const font = `${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
   const maxLength = computeMaxLength(availableWidth, font);
   inputEl.maxLength = maxLength;
   return maxLength;
@@ -815,9 +828,11 @@ module.exports = defineConfig({
 ```js
 const { test, expect } = require('@playwright/test');
 
-// Baseline behaviour of the letter-dance page.
-// These tests lock current behaviour BEFORE any refactor so regressions
-// are caught. They intentionally describe what the page does today.
+// Baseline behaviour of the letter-dance page under the
+// Layer Swapping / Temporal Decoupling architecture:
+// - idle: the input is 100% native (visible text, native caret/selection,
+//   native placeholder), the animation stage is dormant and empty.
+// - animating: an ephemeral stage over the input dances, then is torn down.
 
 test.describe('letter-dance baseline', () => {
   test.beforeEach(async ({ page }) => {
@@ -827,63 +842,78 @@ test.describe('letter-dance baseline', () => {
   test('page loads with title, default text and button', async ({ page }) => {
     await expect(page).toHaveTitle('Letter Dance');
 
-    const hiddenInput = page.locator('#hidden-input');
-    await expect(hiddenInput).toHaveValue('HELLO WORLD');
+    const textInput = page.locator('#text-input');
+    await expect(textInput).toHaveValue('HELLO WORLD');
 
-    // Mirror splits every char (incl. space) into .letter spans.
-    const letters = page.locator('#text-input .letter');
-    await expect(letters).toHaveCount('HELLO WORLD'.length);
-    await expect(letters.first()).toHaveText('H');
+    // Idle: native visible text, empty dormant stage.
+    await expect(textInput).toBeVisible();
+    const color = await textInput.evaluate((el) => getComputedStyle(el).color);
+    expect(color).not.toBe('rgba(0, 0, 0, 0)');
+    await expect(page.locator('#animation-stage .letter')).toHaveCount(0);
+    await expect(page.locator('.input-wrapper')).toHaveAttribute('data-state', 'idle');
 
     await expect(page.locator('#btn')).toHaveText('Click Me');
     await expect(page.locator('#btn')).toBeEnabled();
   });
 
-  test('typing in the input re-splits the mirror', async ({ page }) => {
-    const hiddenInput = page.locator('#hidden-input');
-    await hiddenInput.fill('AB');
+  test('typing in the input does not build animation DOM', async ({ page }) => {
+    const textInput = page.locator('#text-input');
+    await textInput.fill('AB');
+    await expect(textInput).toHaveValue('AB');
 
-    const letters = page.locator('#text-input .letter');
-    await expect(letters).toHaveCount(2);
-    await expect(letters.nth(0)).toHaveText('A');
-    await expect(letters.nth(1)).toHaveText('B');
+    // No live mirroring: the stage stays empty while editing.
+    await expect(page.locator('#animation-stage .letter')).toHaveCount(0);
+    await expect(page.locator('#animation-stage')).toBeHidden();
   });
 
-  test('spaces are rendered as non-breaking spaces', async ({ page }) => {
-    await page.locator('#hidden-input').fill('A B');
-
-    const letters = page.locator('#text-input .letter');
-    await expect(letters).toHaveCount(3);
-    await expect(letters.nth(1)).toHaveText('\u00A0');
-  });
-
-  test('empty input shows placeholder', async ({ page }) => {
-    await page.locator('#hidden-input').fill('');
-    await expect(page.locator('#text-input .letter')).toHaveCount(0);
-
-    const placeholder = await page.evaluate(() => {
-      const el = document.querySelector('#text-input');
-      return window.getComputedStyle(el, '::before').content;
+  test('selection is fully native (no synthetic highlight)', async ({ page }) => {
+    const textInput = page.locator('#text-input');
+    await textInput.fill('ABC');
+    await textInput.focus();
+    await page.evaluate(() => {
+      document.getElementById('text-input').setSelectionRange(0, 2);
     });
-    expect(placeholder).toContain('Type your text...');
+
+    // Native selection range is intact...
+    const selection = await textInput.evaluate((el) => [
+      el.selectionStart,
+      el.selectionEnd,
+    ]);
+    expect(selection).toEqual([0, 2]);
+    // ...and no synthetic highlight elements exist.
+    await expect(page.locator('.letter.selected')).toHaveCount(0);
+    await expect(page.locator('#animation-stage .letter')).toHaveCount(0);
   });
 
-  test('clicking the button triggers a cascading dance and disables the button', async ({
+  test('empty input shows native placeholder', async ({ page }) => {
+    const textInput = page.locator('#text-input');
+    await textInput.fill('');
+    await expect(page.locator('#animation-stage .letter')).toHaveCount(0);
+    await expect(textInput).toHaveAttribute('placeholder', 'Type your text...');
+  });
+
+  test('clicking the button builds an ephemeral stage, dances, then tears it down', async ({
     page,
   }) => {
     const btn = page.locator('#btn');
-    const letters = page.locator('#text-input .letter');
+    const wrapper = page.locator('.input-wrapper');
+    const stage = page.locator('#animation-stage');
 
     await btn.click();
 
-    // Button is disabled while dancing.
+    // Animating state: button disabled, wrapper flagged, stage populated
+    // from a snapshot of the input value.
     await expect(btn).toBeDisabled();
     await expect(btn).toHaveClass(/dancing/);
+    await expect(wrapper).toHaveAttribute('data-state', 'animating');
+    const stageLetters = stage.locator('.letter');
+    await expect(stageLetters).toHaveCount('HELLO WORLD'.length);
+    await expect(stageLetters.first()).toHaveText('H');
+    await expect(stageLetters.nth(5)).toHaveText('\u00A0');
 
     // Letters animate: at least the first letter should leave y=0 quickly.
-    // Wait for any non-identity transform on the first letter.
     await page.waitForFunction(() => {
-      const first = document.querySelector('#text-input .letter');
+      const first = document.querySelector('#animation-stage .letter');
       if (!first) return false;
       const t = first.style.transform;
       return t !== '' && t !== 'translateY(0)' && t !== 'translateY(0px)';
@@ -892,45 +922,48 @@ test.describe('letter-dance baseline', () => {
     // Ripple element is created on click and removed after animation.
     await expect(page.locator('#btn .ripple')).toHaveCount(0, { timeout: 3000 });
 
-    // After the full cascade the button is re-enabled. Default text
-    // "HELLO WORLD" (11 chars): 11*150 + 1000 = 2650ms, allow margin.
+    // After the full cascade ("HELLO WORLD", 11 chars):
+    // 11*150 + 1000 = 2650ms, allow margin.
     await expect(btn).toBeEnabled({ timeout: 8000 });
     await expect(btn).not.toHaveClass(/dancing/);
+    await expect(wrapper).toHaveAttribute('data-state', 'idle');
 
-    // All letters settle back at y=0.
-    const transforms = await letters.evaluateAll((els) =>
-      els.map((el) => el.style.transform)
-    );
-    for (const t of transforms) {
-      expect(['', 'translateY(0)', 'translateY(0px)']).toContain(t);
-    }
+    // Stage fully torn down; native input value untouched and visible.
+    await expect(stageLetters).toHaveCount(0);
+    await expect(stage).toBeHidden();
+    await expect(page.locator('#text-input')).toHaveValue('HELLO WORLD');
   });
 
   test('input enforces a maxlength (dynamic, capped at 50)', async ({ page }) => {
-    const maxLength = await page.locator('#hidden-input').evaluate((el) => el.maxLength);
+    const maxLength = await page.locator('#text-input').evaluate((el) => el.maxLength);
     expect(maxLength).toBeGreaterThan(0);
     expect(maxLength).toBeLessThanOrEqual(50);
 
     // Typing beyond maxlength is truncated by the browser.
-    await page.locator('#hidden-input').fill('x'.repeat(60));
-    const value = await page.locator('#hidden-input').inputValue();
+    await page.locator('#text-input').fill('x'.repeat(60));
+    const value = await page.locator('#text-input').inputValue();
     expect(value.length).toBeLessThanOrEqual(50);
-    await expect(page.locator('#text-input .letter')).toHaveCount(value.length);
+    // Still no animation DOM after typing.
+    await expect(page.locator('#animation-stage .letter')).toHaveCount(0);
   });
 
-  test('selection in input highlights mirrored letters', async ({ page }) => {
-    const hiddenInput = page.locator('#hidden-input');
-    await hiddenInput.fill('ABC');
-    await hiddenInput.focus();
-    await page.evaluate(() => {
-      const el = document.getElementById('hidden-input');
-      el.setSelectionRange(0, 2);
-      // selectionchange fires async; dispatch to be deterministic in test
-      document.dispatchEvent(new Event('selectionchange'));
-    });
+  test('input text is hidden only while animating', async ({ page }) => {
+    const textInput = page.locator('#text-input');
 
-    const selected = page.locator('#text-input .letter.selected');
-    await expect(selected).toHaveCount(2);
+    const idleColor = await textInput.evaluate((el) => getComputedStyle(el).color);
+    expect(idleColor).not.toBe('rgba(0, 0, 0, 0)');
+
+    await page.locator('#btn').click();
+    await expect(page.locator('.input-wrapper')).toHaveAttribute(
+      'data-state',
+      'animating'
+    );
+    const animatingColor = await textInput.evaluate((el) => getComputedStyle(el).color);
+    expect(animatingColor).toBe('rgba(0, 0, 0, 0)');
+
+    await expect(page.locator('#btn')).toBeEnabled({ timeout: 8000 });
+    const restoredColor = await textInput.evaluate((el) => getComputedStyle(el).color);
+    expect(restoredColor).toBe(idleColor);
   });
 });
 ```
@@ -940,8 +973,8 @@ test.describe('letter-dance baseline', () => {
 ```js
 const { test, expect } = require('@playwright/test');
 
-// Post-refactor behaviour: guards the fixes and guarantees, not just the
-// original baseline. If any of these fail, a refactor regressed behaviour.
+// Behavioural guarantees under Layer Swapping / Temporal Decoupling:
+// the editing surface and the animation surface never coexist.
 
 test.describe('letter-dance behaviour', () => {
   test.beforeEach(async ({ page }) => {
@@ -954,31 +987,31 @@ test.describe('letter-dance behaviour', () => {
 
   test('rapid clicks during a dance are ignored (single cascade)', async ({ page }) => {
     const btn = page.locator('#btn');
-    // Triple-click quickly; guard must prevent overlapping dances.
+    // Triple-click quickly; the state guard must prevent overlapping dances.
     await btn.click();
     await btn.click({ force: true }).catch(() => {});
     await btn.click({ force: true }).catch(() => {});
 
-    // Still exactly one dance: button re-enables after one cascade.
+    // Still exactly one dance: button re-enables after one cascade,
+    // state returns to idle, stage is torn down.
     await expect(btn).toBeEnabled({ timeout: 8000 });
     await expect(btn).not.toHaveClass(/dancing/);
-    const transforms = await page
-      .locator('#text-input .letter')
-      .evaluateAll((els) => els.map((el) => el.style.transform));
-    for (const t of transforms) {
-      expect(['', 'translateY(0)', 'translateY(0px)']).toContain(t);
-    }
+    await expect(page.locator('.input-wrapper')).toHaveAttribute('data-state', 'idle');
+    await expect(page.locator('#animation-stage .letter')).toHaveCount(0);
   });
 
   test('button is re-enabled even with empty text (no letters)', async ({ page }) => {
-    await page.locator('#hidden-input').fill('');
+    await page.locator('#text-input').fill('');
     await page.locator('#btn').click();
     await expect(page.locator('#btn')).toBeEnabled({ timeout: 5000 });
+    await expect(page.locator('.input-wrapper')).toHaveAttribute('data-state', 'idle');
+    await expect(page.locator('#animation-stage .letter')).toHaveCount(0);
   });
 
   test('ripple element never leaks (removed after animation)', async ({ page }) => {
     await page.locator('#btn').click();
     await expect(page.locator('#btn .ripple')).toHaveCount(0, { timeout: 3000 });
+    await expect(page.locator('#btn')).toBeEnabled({ timeout: 8000 });
   });
 
   test('disabled button has not-allowed cursor via CSS', async ({ page }) => {
@@ -990,42 +1023,37 @@ test.describe('letter-dance behaviour', () => {
     await expect(btn).toBeEnabled({ timeout: 8000 });
   });
 
-  test('collapsing the selection clears mirror highlight', async ({ page }) => {
-    const hiddenInput = page.locator('#hidden-input');
-    await hiddenInput.fill('ABC');
-    await hiddenInput.focus();
-    await page.evaluate(() => {
-      document.getElementById('hidden-input').setSelectionRange(0, 2);
-      document.dispatchEvent(new Event('selectionchange'));
-    });
-    await expect(page.locator('#text-input .letter.selected')).toHaveCount(2);
-
-    // Collapse the selection -> highlight must clear (old code left it stale).
-    await page.evaluate(() => {
-      const el = document.getElementById('hidden-input');
-      el.setSelectionRange(1, 1);
-      document.dispatchEvent(new Event('selectionchange'));
-    });
-    await expect(page.locator('#text-input .letter.selected')).toHaveCount(0);
+  test('input ignores pointer events while animating', async ({ page }) => {
+    await page.locator('#btn').click();
+    await expect(page.locator('.input-wrapper')).toHaveAttribute(
+      'data-state',
+      'animating'
+    );
+    const pointerEvents = await page
+      .locator('#text-input')
+      .evaluate((el) => getComputedStyle(el).pointerEvents);
+    expect(pointerEvents).toBe('none');
+    await expect(page.locator('#btn')).toBeEnabled({ timeout: 8000 });
   });
 
-  test('typing after a selection clears stale highlight', async ({ page }) => {
-    const hiddenInput = page.locator('#hidden-input');
-    await hiddenInput.fill('ABC');
-    await hiddenInput.focus();
-    await page.evaluate(() => {
-      document.getElementById('hidden-input').setSelectionRange(0, 3);
-      document.dispatchEvent(new Event('selectionchange'));
-    });
-    await expect(page.locator('#text-input .letter.selected')).toHaveCount(3);
+  test('stage snapshots the value at click time', async ({ page }) => {
+    const textInput = page.locator('#text-input');
+    await textInput.fill('ABC');
+    await page.locator('#btn').click();
 
-    await hiddenInput.press('Backspace');
-    await expect(page.locator('#text-input .letter.selected')).toHaveCount(0);
+    // Stage reflects the clicked-time value...
+    const stageLetters = page.locator('#animation-stage .letter');
+    await expect(stageLetters).toHaveCount(3);
+
+    // ...and the input value survives the dance untouched.
+    await expect(page.locator('#btn')).toBeEnabled({ timeout: 8000 });
+    await expect(textInput).toHaveValue('ABC');
+    await expect(stageLetters).toHaveCount(0);
   });
 
   test('maxlength updates on resize and stays within [1, 50]', async ({ page }) => {
     const maxLength = async () =>
-      page.locator('#hidden-input').evaluate((el) => el.maxLength);
+      page.locator('#text-input').evaluate((el) => el.maxLength);
 
     await page.setViewportSize({ width: 1200, height: 800 });
     const wide = await maxLength();
@@ -1040,19 +1068,21 @@ test.describe('letter-dance behaviour', () => {
   });
 
   test('cascade timing: letters start in order', async ({ page }) => {
-    await page.locator('#hidden-input').fill('ABCDE');
+    await page.locator('#text-input').fill('ABCDE');
     await page.locator('#btn').click();
 
     // Sample transforms shortly after click: first letter should already
     // be moving while the last one has not started yet (4*150=600ms delay).
     await page.waitForTimeout(150);
     const snapshot = await page
-      .locator('#text-input .letter')
+      .locator('#animation-stage .letter')
       .evaluateAll((els) => els.map((el) => el.style.transform));
+    expect(snapshot).toHaveLength(5);
     expect(snapshot[0]).not.toBe('');
     expect(snapshot[4]).toBe('');
 
     await expect(page.locator('#btn')).toBeEnabled({ timeout: 8000 });
+    await expect(page.locator('#animation-stage .letter')).toHaveCount(0);
   });
 });
 ```
