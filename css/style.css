@@ -132,24 +132,26 @@ body {
   color: #fff;
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
-  transition: background-color 0.3s;
+  transition: background-color 0.3s, transform 0.12s ease-out;
 }
 
-.btn:hover:not(:disabled) {
+.btn:hover:not(.dancing) {
   background-color: #3700b3;
 }
 
-.btn:disabled {
-  cursor: not-allowed;
-  opacity: 0.7;
+/* Instantaneous tactile press: snappy scale-down that springs back
+   as soon as the pointer is released (via the transform transition). */
+.btn:active:not(.dancing) {
+  transform: scale(0.94);
+  transition: transform 0.06s ease-in;
 }
 
-.btn:active {
-  transform: scale(0.97);
-}
-
-.btn.dancing:active {
-  transform: scale(1);
+/* Dancing state: click-protected but visually vibrant. The state guard
+   in JS ignores re-triggering; pointer-events blocks hover/press while
+   opacity stays crisp at 1 — no sluggish dimming for the whole cascade. */
+.btn.dancing {
+  pointer-events: none;
+  opacity: 1;
 }
 
 .ripple {

@@ -16,21 +16,23 @@ test.describe('letter-dance behaviour', () => {
     const btn = page.locator('#btn');
     // Triple-click quickly; the state guard must prevent overlapping dances.
     await btn.click();
-    await btn.click({ force: true }).catch(() => {});
-    await btn.click({ force: true }).catch(() => {});
+    // pointer-events:none blocks real re-clicks; force bypasses that to
+    // prove the JS state guard alone still prevents a second cascade.
+    await page.evaluate(() => document.getElementById('btn').click());
+    await page.evaluate(() => document.getElementById('btn').click());
 
-    // Still exactly one dance: button re-enables after one cascade,
+    // Still exactly one dance: class removed after one cascade,
     // state returns to idle, stage is torn down.
-    await expect(btn).toBeEnabled({ timeout: 8000 });
-    await expect(btn).not.toHaveClass(/dancing/);
+    await expect(btn).not.toHaveClass(/dancing/, { timeout: 8000 });
+    await expect(btn).not.toHaveAttribute('aria-disabled', 'true');
     await expect(page.locator('.input-wrapper')).toHaveAttribute('data-state', 'idle');
     await expect(page.locator('#animation-stage .letter')).toHaveCount(0);
   });
 
-  test('button is re-enabled even with empty text (no letters)', async ({ page }) => {
+  test('button returns to idle even with empty text (no letters)', async ({ page }) => {
     await page.locator('#text-input').fill('');
     await page.locator('#btn').click();
-    await expect(page.locator('#btn')).toBeEnabled({ timeout: 5000 });
+    await expect(page.locator('#btn')).not.toHaveClass(/dancing/, { timeout: 5000 });
     await expect(page.locator('.input-wrapper')).toHaveAttribute('data-state', 'idle');
     await expect(page.locator('#animation-stage .letter')).toHaveCount(0);
   });
@@ -38,16 +40,47 @@ test.describe('letter-dance behaviour', () => {
   test('ripple element never leaks (removed after animation)', async ({ page }) => {
     await page.locator('#btn').click();
     await expect(page.locator('#btn .ripple')).toHaveCount(0, { timeout: 3000 });
-    await expect(page.locator('#btn')).toBeEnabled({ timeout: 8000 });
+    await expect(page.locator('#btn')).not.toHaveClass(/dancing/, { timeout: 8000 });
   });
 
-  test('disabled button has not-allowed cursor via CSS', async ({ page }) => {
+  test('dancing button stays vibrant and ignores pointer events', async ({ page }) => {
     const btn = page.locator('#btn');
     await btn.click();
-    await expect(btn).toBeDisabled();
-    const cursor = await btn.evaluate((el) => getComputedStyle(el).cursor);
-    expect(cursor).toBe('not-allowed');
-    await expect(btn).toBeEnabled({ timeout: 8000 });
+    await expect(btn).toHaveClass(/dancing/);
+
+    // Click-protection WITHOUT visual dimming: full opacity, no pointer.
+    const style = await btn.evaluate((el) => {
+      const s = getComputedStyle(el);
+      return { opacity: s.opacity, pointerEvents: s.pointerEvents };
+    });
+    expect(style.opacity).toBe('1');
+    expect(style.pointerEvents).toBe('none');
+    await expect(btn).toHaveAttribute('aria-disabled', 'true');
+
+    await expect(btn).not.toHaveClass(/dancing/, { timeout: 8000 });
+    await expect(btn).not.toHaveAttribute('aria-disabled', 'true');
+  });
+
+  test('button press gives instant tactile feedback (scale down and back)', async ({
+    page,
+  }) => {
+    const btn = page.locator('#btn');
+    const box = await btn.boundingBox();
+    const center = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+
+    // mousedown -> :active scale-down applies immediately.
+    await page.mouse.move(center.x, center.y);
+    await page.mouse.down();
+    const pressed = await btn.evaluate((el) => getComputedStyle(el).transform);
+    expect(pressed).not.toBe('none');
+
+    // mouseup -> springs back to identity via the transform transition.
+    await page.mouse.up();
+    await expect
+      .poll(() => btn.evaluate((el) => getComputedStyle(el).transform), {
+        timeout: 2000,
+      })
+      .toBe('none');
   });
 
   test('input ignores pointer events while animating', async ({ page }) => {
@@ -60,7 +93,7 @@ test.describe('letter-dance behaviour', () => {
       .locator('#text-input')
       .evaluate((el) => getComputedStyle(el).pointerEvents);
     expect(pointerEvents).toBe('none');
-    await expect(page.locator('#btn')).toBeEnabled({ timeout: 8000 });
+    await expect(page.locator('#btn')).not.toHaveClass(/dancing/, { timeout: 8000 });
   });
 
   test('stage snapshots the value at click time', async ({ page }) => {
@@ -73,7 +106,7 @@ test.describe('letter-dance behaviour', () => {
     await expect(stageLetters).toHaveCount(3);
 
     // ...and the input value survives the dance untouched.
-    await expect(page.locator('#btn')).toBeEnabled({ timeout: 8000 });
+    await expect(page.locator('#btn')).not.toHaveClass(/dancing/, { timeout: 8000 });
     await expect(textInput).toHaveValue('ABC');
     await expect(stageLetters).toHaveCount(0);
   });
@@ -108,7 +141,7 @@ test.describe('letter-dance behaviour', () => {
     expect(snapshot[0]).not.toBe('');
     expect(snapshot[4]).toBe('');
 
-    await expect(page.locator('#btn')).toBeEnabled({ timeout: 8000 });
+    await expect(page.locator('#btn')).not.toHaveClass(/dancing/, { timeout: 8000 });
     await expect(page.locator('#animation-stage .letter')).toHaveCount(0);
   });
 
@@ -152,6 +185,6 @@ test.describe('letter-dance behaviour', () => {
     // Sub-pixel tolerance: the swap must be imperceptible.
     expect(Math.abs(stageTextTop - nativeTextTop)).toBeLessThan(1);
 
-    await expect(page.locator('#btn')).toBeEnabled({ timeout: 8000 });
+    await expect(page.locator('#btn')).not.toHaveClass(/dancing/, { timeout: 8000 });
   });
 });

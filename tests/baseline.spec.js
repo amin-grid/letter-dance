@@ -25,7 +25,8 @@ test.describe('letter-dance baseline', () => {
     await expect(page.locator('.input-wrapper')).toHaveAttribute('data-state', 'idle');
 
     await expect(page.locator('#btn')).toHaveText('Click Me');
-    await expect(page.locator('#btn')).toBeEnabled();
+    await expect(page.locator('#btn')).not.toHaveClass(/dancing/);
+    await expect(page.locator('#btn')).not.toHaveAttribute('aria-disabled', 'true');
   });
 
   test('typing in the input does not build animation DOM', async ({ page }) => {
@@ -73,9 +74,9 @@ test.describe('letter-dance baseline', () => {
 
     await btn.click();
 
-    // Animating state: button disabled, wrapper flagged, stage populated
-    // from a snapshot of the input value.
-    await expect(btn).toBeDisabled();
+    // Animating state: button click-protected (aria-disabled + .dancing),
+    // wrapper flagged, stage populated from a snapshot of the input value.
+    await expect(btn).toHaveAttribute('aria-disabled', 'true');
     await expect(btn).toHaveClass(/dancing/);
     await expect(wrapper).toHaveAttribute('data-state', 'animating');
     const stageLetters = stage.locator('.letter');
@@ -96,8 +97,8 @@ test.describe('letter-dance baseline', () => {
 
     // After the full cascade ("HELLO WORLD", 11 chars):
     // 11*150 + 1000 = 2650ms, allow margin.
-    await expect(btn).toBeEnabled({ timeout: 8000 });
-    await expect(btn).not.toHaveClass(/dancing/);
+    await expect(btn).not.toHaveClass(/dancing/, { timeout: 8000 });
+    await expect(btn).not.toHaveAttribute('aria-disabled', 'true');
     await expect(wrapper).toHaveAttribute('data-state', 'idle');
 
     // Stage fully torn down; native input value untouched and visible.
@@ -133,7 +134,7 @@ test.describe('letter-dance baseline', () => {
     const animatingColor = await textInput.evaluate((el) => getComputedStyle(el).color);
     expect(animatingColor).toBe('rgba(0, 0, 0, 0)');
 
-    await expect(page.locator('#btn')).toBeEnabled({ timeout: 8000 });
+    await expect(page.locator('#btn')).not.toHaveClass(/dancing/, { timeout: 8000 });
     const restoredColor = await textInput.evaluate((el) => getComputedStyle(el).color);
     expect(restoredColor).toBe(idleColor);
   });

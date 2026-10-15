@@ -58,7 +58,10 @@ async function startDance() {
   if (getState() !== STATE_IDLE) return;
   setState(STATE_ANIMATING);
 
-  btn.disabled = true;
+  // No native `disabled`: it would dim the button and drop tab focus for
+  // the whole cascade. Click-protection comes from the state guard above
+  // plus `.dancing { pointer-events: none }`; aria-disabled informs AT.
+  btn.setAttribute('aria-disabled', 'true');
   btn.classList.add('dancing');
 
   try {
@@ -68,7 +71,7 @@ async function startDance() {
     teardownStage(stage);
     setState(STATE_IDLE);
     btn.classList.remove('dancing');
-    btn.disabled = false;
+    btn.removeAttribute('aria-disabled');
   }
 }
 
