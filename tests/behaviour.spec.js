@@ -49,7 +49,8 @@ test.describe('letter-dance behaviour', () => {
     await expect(btn).toHaveClass(/dancing/);
 
     // Click-protection WITHOUT visual dimming: full opacity, no pointer,
-    // engaged tone pinned with transitions frozen (no hover-wash fade).
+    // engaged tone pinned instantly (no bg transition -> no hover-wash),
+    // transform transition kept alive for the press-release spring.
     const style = await btn.evaluate((el) => {
       const s = getComputedStyle(el);
       return {
@@ -62,7 +63,8 @@ test.describe('letter-dance behaviour', () => {
     expect(style.opacity).toBe('1');
     expect(style.pointerEvents).toBe('none');
     expect(style.background).toBe('rgb(55, 0, 179)'); // pinned hover-dark
-    expect(style.transition).toBe('none');
+    expect(style.transition).toContain('transform');
+    expect(style.transition).not.toContain('background');
     await expect(btn).toHaveAttribute('aria-disabled', 'true');
 
     await expect(btn).not.toHaveClass(/dancing/, { timeout: 8000 });
@@ -83,8 +85,16 @@ test.describe('letter-dance behaviour', () => {
     const pressed = await btn.evaluate((el) => getComputedStyle(el).transform);
     expect(pressed).toContain('0.92');
 
-    // mouseup -> springs back to identity via the transform transition.
+    // mouseup -> the release must ANIMATE (spring back over ~180ms),
+    // not snap: sample mid-release and require an intermediate value.
+    // (A `transition: none` regression would already read 'none' here.)
     await page.mouse.up();
+    await page.waitForTimeout(30);
+    const midRelease = await btn.evaluate((el) => getComputedStyle(el).transform);
+    expect(midRelease).not.toBe('none');
+    expect(midRelease).not.toContain('0.92');
+
+    // ...then settle at identity.
     await expect
       .poll(() => btn.evaluate((el) => getComputedStyle(el).transform), {
         timeout: 2000,

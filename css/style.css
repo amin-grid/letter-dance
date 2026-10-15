@@ -162,13 +162,15 @@ body {
 
 /* Dancing state: click-protected but visually vibrant. The state guard
    in JS ignores re-triggering; pointer-events blocks hover/press.
-   The engaged (hover-dark) tone is pinned with transitions frozen so
-   there is no 300ms color "wash" when :hover drops at dance start. */
+   The engaged (hover-dark) tone is pinned with an INSTANT background
+   (no bg in the transition list) so there is no color "wash" when
+   :hover drops at dance start — while the transform transition is KEPT
+   so the press-release spring-back still animates instead of snapping. */
 .btn.dancing {
   pointer-events: none;
   opacity: 1;
   background-color: #3700b3;
-  transition: none;
+  transition: transform 0.18s cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 
 .ripple {
