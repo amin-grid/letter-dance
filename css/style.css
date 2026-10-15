@@ -48,77 +48,70 @@ body {
   contain: layout;
 }
 
-.hidden-input {
+.text-input {
   grid-area: 1 / 1;
   width: 100%;
   height: 3.5rem;
   padding: 0.75rem 1rem;
   font-family: inherit;
   font-size: 1.25rem;
-  font-weight: 600;
+  font-weight: 700;
   line-height: 1.2;
   text-align: center;
-  border: 2px solid transparent;
+  color: #333;
+  background: #fff;
+  border: 2px solid #ddd;
   border-radius: 8px;
-  background: transparent;
-  color: transparent;
-  caret-color: #6200ee;
   outline: none;
   transition: border-color 0.2s, box-shadow 0.2s;
-  box-sizing: border-box;
-  appearance: none;
-  -webkit-appearance: none;
-  -moz-appearance: none;
-  z-index: 1;
-  white-space: nowrap;
-  overflow: hidden;
 }
 
-.hidden-input::selection {
-  background: transparent;
-  color: transparent;
+.text-input:focus-visible {
+  border-color: #6200ee;
+  box-shadow: 0 0 0 3px rgba(98, 0, 238, 0.15);
 }
 
-#text-input {
+.text-input::placeholder {
+  color: #999;
+  font-weight: 400;
+}
+
+/* Ephemeral animation stage: fully dormant until the wrapper
+   enters the animating state. Letters overflow visibly so jumps
+   are never clipped. */
+.animation-stage {
   grid-area: 1 / 1;
+  display: none;
   padding: 0.75rem 1rem;
   font-family: inherit;
   font-size: 1.25rem;
-  font-weight: 600;
+  font-weight: 700;
   line-height: 1.2;
   text-align: center;
   color: #333;
   pointer-events: none;
   white-space: nowrap;
-  text-overflow: ellipsis;
-  z-index: 0;
   box-sizing: border-box;
-  background: #fff;
-  border-radius: 8px;
-  border: 2px solid #ddd;
 }
 
-.input-wrapper:focus-within #text-input {
-  border-color: #6200ee;
-  box-shadow: 0 0 0 3px rgba(98, 0, 238, 0.15);
+.input-wrapper[data-state="animating"] .animation-stage {
+  display: block;
 }
 
-#text-input:empty::before {
-  content: "Type your text...";
-  color: #999;
-  font-weight: 400;
+/* While animating, the native input yields visually (value untouched)
+   and ignores pointer input: editing and animation never overlap. */
+.input-wrapper[data-state="animating"] .text-input {
+  color: transparent;
+  caret-color: transparent;
+  pointer-events: none;
 }
 
-#text-input .letter {
+.input-wrapper[data-state="animating"] .text-input::placeholder {
+  color: transparent;
+}
+
+.animation-stage .letter {
   display: inline-block;
-  font-size: inherit;
-  font-weight: 700;
-}
-
-#text-input .letter.selected {
-  background: #6200ee;
-  color: #fff;
-  border-radius: 2px;
 }
 
 .btn {

@@ -1,42 +1,42 @@
-// Entry point: wires the input mirror, maxlength, dance button, and ripple.
+// Entry point: explicit state machine for Layer Swapping / Temporal Decoupling.
+//
+//   idle ──(button click)──▶ animating ──(dance resolves)──▶ idle
+//
+// - idle:      the <input> is a fully native control (caret, selection,
+//              placeholder). The animation stage is dormant and empty.
+// - animating: the input yields visually, an ephemeral stage is built over
+//              it from a text snapshot, and the cascade runs on that stage.
+// Afterwards the stage is torn down and the input restored untouched.
 
 import { danceLetters } from './dance.js';
-import { clearSelection, renderLetters, syncSelection } from './mirror.js';
+import { buildStage, teardownStage } from './stage.js';
 import { updateMaxLength } from './maxlength.js';
 import { createRipple } from './ripple.js';
 
+const STATE_IDLE = 'idle';
+const STATE_ANIMATING = 'animating';
+
 const btn = document.getElementById('btn');
-const hiddenInput = document.getElementById('hidden-input');
 const textInput = document.getElementById('text-input');
+const stage = document.getElementById('animation-stage');
 const wrapper = document.querySelector('.input-wrapper');
 
-if (!btn || !hiddenInput || !textInput || !wrapper) {
+if (!btn || !textInput || !stage || !wrapper) {
   throw new Error('letter-dance: required DOM elements are missing');
 }
 
-// --- Input mirror -------------------------------------------------------
+function getState() {
+  return wrapper.dataset.state ?? STATE_IDLE;
+}
 
-renderLetters(textInput, hiddenInput.value);
-
-hiddenInput.addEventListener('input', () => {
-  renderLetters(textInput, hiddenInput.value);
-  clearSelection(textInput);
-});
-
-document.addEventListener('selectionchange', () => {
-  if (document.activeElement !== hiddenInput) return;
-  if (hiddenInput.selectionStart === hiddenInput.selectionEnd) {
-    clearSelection(textInput);
-    return;
-  }
-  syncSelection(textInput, hiddenInput);
-});
-hiddenInput.addEventListener('blur', () => clearSelection(textInput));
+function setState(next) {
+  wrapper.dataset.state = next;
+}
 
 // --- Dynamic maxlength ---------------------------------------------------
 
 function refreshMaxLength() {
-  updateMaxLength({ wrapperEl: wrapper, mirrorEl: textInput, inputEl: hiddenInput });
+  updateMaxLength({ wrapperEl: wrapper, inputEl: textInput });
 }
 
 refreshMaxLength();
@@ -54,19 +54,19 @@ window.addEventListener('resize', () => {
 
 // --- Dance ---------------------------------------------------------------
 
-let isDancing = false;
-
 async function startDance() {
-  if (isDancing) return;
-  isDancing = true;
+  if (getState() !== STATE_IDLE) return;
+  setState(STATE_ANIMATING);
 
   btn.disabled = true;
   btn.classList.add('dancing');
 
   try {
-    await danceLetters(textInput.querySelectorAll('.letter'));
+    const letters = buildStage(stage, textInput.value);
+    await danceLetters(letters);
   } finally {
-    isDancing = false;
+    teardownStage(stage);
+    setState(STATE_IDLE);
     btn.classList.remove('dancing');
     btn.disabled = false;
   }

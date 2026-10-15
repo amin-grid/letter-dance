@@ -26,14 +26,13 @@ export function computeMaxLength(availableWidth, font) {
 
 /**
  * Recompute and apply the maxlength for `inputEl` based on the current
- * width of `wrapperEl` and font of `mirrorEl`.
+ * width of `wrapperEl` and the input's own font.
  */
-export function updateMaxLength({ wrapperEl, mirrorEl, inputEl }) {
-  const style = getComputedStyle(wrapperEl);
+export function updateMaxLength({ wrapperEl, inputEl }) {
+  const style = getComputedStyle(inputEl);
   const padding = parseFloat(style.paddingLeft) + parseFloat(style.paddingRight);
-  const availableWidth = wrapperEl.clientWidth - padding;
-  const mirrorStyle = getComputedStyle(mirrorEl);
-  const font = `${mirrorStyle.fontWeight} ${mirrorStyle.fontSize} ${mirrorStyle.fontFamily}`;
+  const availableWidth = inputEl.clientWidth - padding;
+  const font = `${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
   const maxLength = computeMaxLength(availableWidth, font);
   inputEl.maxLength = maxLength;
   return maxLength;
