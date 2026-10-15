@@ -36,7 +36,7 @@ function setState(next) {
 // --- Dynamic maxlength ---------------------------------------------------
 
 function refreshMaxLength() {
-  updateMaxLength({ wrapperEl: wrapper, inputEl: textInput });
+  updateMaxLength({ inputEl: textInput });
 }
 
 refreshMaxLength();

@@ -13,7 +13,7 @@ function getMeasureContext() {
 }
 
 /**
- * Compute how many characters fit in `wrapperEl`, given the mirror's font.
+ * Compute how many characters fit in `availableWidth`, given the input's font.
  * Returns a value in [1, MAX_LENGTH]. Pure (no DOM side effects).
  */
 export function computeMaxLength(availableWidth, font) {
@@ -28,7 +28,7 @@ export function computeMaxLength(availableWidth, font) {
  * Recompute and apply the maxlength for `inputEl` based on the current
  * width of `wrapperEl` and the input's own font.
  */
-export function updateMaxLength({ wrapperEl, inputEl }) {
+export function updateMaxLength({ inputEl }) {
   const style = getComputedStyle(inputEl);
   const padding = parseFloat(style.paddingLeft) + parseFloat(style.paddingRight);
   const availableWidth = inputEl.clientWidth - padding;
