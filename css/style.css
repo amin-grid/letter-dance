@@ -19,6 +19,19 @@
   font-style: normal;
   font-display: swap;
 }
+/* Metric-matched fallback: while Fredoka is still loading, render
+   Arial scaled to Fredoka's narrower advance widths so the
+   swap causes (almost) no reflow. Measured: Fredoka/Arial = 0.91
+   for the input's 700/20px setting. */
+@font-face {
+  font-family: 'Fredoka-fallback';
+  /* local() does not resolve fontconfig aliases (e.g. Arial -> Liberation
+     Sans on Linux), so list real family names per platform. Arial and
+     Liberation Sans are metric-compatible, sharing one size-adjust. */
+  src: local('Arial'), local('Liberation Sans'), local('Helvetica Neue');
+  size-adjust: 91%;
+  ascent-override: 92%;
+}
 
 *, *::before, *::after {
   box-sizing: border-box;
@@ -33,7 +46,7 @@ body {
   justify-content: center;
   align-items: center;
   background-color: #f0f0f0;
-  font-family: 'Fredoka', system-ui, sans-serif;
+  font-family: 'Fredoka', 'Fredoka-fallback', system-ui, sans-serif;
 }
 
 .container {
@@ -132,26 +145,30 @@ body {
   color: #fff;
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
-  transition: background-color 0.3s, transform 0.12s ease-out;
+  transition: background-color 0.2s ease-out, transform 0.18s cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 
 .btn:hover:not(.dancing) {
   background-color: #3700b3;
 }
 
-/* Instantaneous tactile press: snappy scale-down that springs back
-   as soon as the pointer is released (via the transform transition). */
+/* Instantaneous tactile press: zero-duration INTO the press (snappy,
+   registers even on a ~60ms quick click); the base-state transition
+   springs back with a slight overshoot on release. */
 .btn:active:not(.dancing) {
-  transform: scale(0.94);
-  transition: transform 0.06s ease-in;
+  transform: scale(0.92);
+  transition-duration: 0s;
 }
 
 /* Dancing state: click-protected but visually vibrant. The state guard
-   in JS ignores re-triggering; pointer-events blocks hover/press while
-   opacity stays crisp at 1 — no sluggish dimming for the whole cascade. */
+   in JS ignores re-triggering; pointer-events blocks hover/press.
+   The engaged (hover-dark) tone is pinned with transitions frozen so
+   there is no 300ms color "wash" when :hover drops at dance start. */
 .btn.dancing {
   pointer-events: none;
   opacity: 1;
+  background-color: #3700b3;
+  transition: none;
 }
 
 .ripple {

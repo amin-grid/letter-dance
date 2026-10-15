@@ -41,6 +41,12 @@ function refreshMaxLength() {
 
 refreshMaxLength();
 
+// Re-measure once webfonts arrive: the initial call may have measured
+// with the fallback font (wrong advance widths -> wrong maxlength).
+if (document.fonts?.ready) {
+  document.fonts.ready.then(() => refreshMaxLength());
+}
+
 let resizeQueued = false;
 window.addEventListener('resize', () => {
   // Coalesce resize events to one recalculation per frame.

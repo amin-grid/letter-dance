@@ -29,6 +29,58 @@ test.describe('letter-dance baseline', () => {
     await expect(page.locator('#btn')).not.toHaveAttribute('aria-disabled', 'true');
   });
 
+  test('Fredoka Bold is preloaded to minimise first-paint font swap', async ({
+    page,
+  }) => {
+    const preload = page.locator(
+      'link[rel="preload"][as="font"][href*="Fredoka-Bold"]'
+    );
+    await expect(preload).toHaveCount(1);
+    await expect(preload).toHaveAttribute('crossorigin', '');
+  });
+
+  test('fallback font metrics match Fredoka (no reflow on swap)', async ({
+    page,
+  }) => {
+    const widths = await page.evaluate(async () => {
+      const measure = (family) => {
+        const span = document.createElement('span');
+        span.style.cssText = `position:absolute;visibility:hidden;white-space:nowrap;font:700 20px ${family};`;
+        span.textContent = 'HELLO WORLD';
+        document.body.appendChild(span);
+        const w = span.getBoundingClientRect().width;
+        span.remove();
+        return w;
+      };
+      const fallback = measure("'Fredoka-fallback'");
+      await document.fonts.load('700 20px Fredoka');
+      const fredoka = measure('Fredoka');
+      return { fallback, fredoka };
+    });
+    // size-adjust keeps the pre-swap width within a few px of Fredoka.
+    expect(Math.abs(widths.fallback - widths.fredoka)).toBeLessThan(5);
+  });
+
+  test('maxlength is computed with the loaded webfont', async ({ page }) => {
+    // Wait for the webfont, then confirm maxlength matches a fresh
+    // canvas measurement with Fredoka (main.js re-runs on fonts.ready).
+    await page.evaluate(() => document.fonts.load('700 20px Fredoka'));
+    const { maxLength, expected } = await page.evaluate(() => {
+      const input = document.getElementById('text-input');
+      const style = getComputedStyle(input);
+      const padding = parseFloat(style.paddingLeft) + parseFloat(style.paddingRight);
+      const available = input.clientWidth - padding;
+      const ctx = document.createElement('canvas').getContext('2d');
+      ctx.font = `${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
+      const charWidth = ctx.measureText('M').width || 1;
+      return {
+        maxLength: input.maxLength,
+        expected: Math.min(50, Math.max(1, Math.floor(available / charWidth))),
+      };
+    });
+    expect(maxLength).toBe(expected);
+  });
+
   test('typing in the input does not build animation DOM', async ({ page }) => {
     const textInput = page.locator('#text-input');
     await textInput.fill('AB');

@@ -48,13 +48,21 @@ test.describe('letter-dance behaviour', () => {
     await btn.click();
     await expect(btn).toHaveClass(/dancing/);
 
-    // Click-protection WITHOUT visual dimming: full opacity, no pointer.
+    // Click-protection WITHOUT visual dimming: full opacity, no pointer,
+    // engaged tone pinned with transitions frozen (no hover-wash fade).
     const style = await btn.evaluate((el) => {
       const s = getComputedStyle(el);
-      return { opacity: s.opacity, pointerEvents: s.pointerEvents };
+      return {
+        opacity: s.opacity,
+        pointerEvents: s.pointerEvents,
+        background: s.backgroundColor,
+        transition: s.transition,
+      };
     });
     expect(style.opacity).toBe('1');
     expect(style.pointerEvents).toBe('none');
+    expect(style.background).toBe('rgb(55, 0, 179)'); // pinned hover-dark
+    expect(style.transition).toBe('none');
     await expect(btn).toHaveAttribute('aria-disabled', 'true');
 
     await expect(btn).not.toHaveClass(/dancing/, { timeout: 8000 });
@@ -68,11 +76,12 @@ test.describe('letter-dance behaviour', () => {
     const box = await btn.boundingBox();
     const center = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
 
-    // mousedown -> :active scale-down applies immediately.
+    // mousedown -> :active scale-down applies INSTANTLY (zero-duration
+    // into the press, so even a ~60ms quick click feels tactile).
     await page.mouse.move(center.x, center.y);
     await page.mouse.down();
     const pressed = await btn.evaluate((el) => getComputedStyle(el).transform);
-    expect(pressed).not.toBe('none');
+    expect(pressed).toContain('0.92');
 
     // mouseup -> springs back to identity via the transform transition.
     await page.mouse.up();
